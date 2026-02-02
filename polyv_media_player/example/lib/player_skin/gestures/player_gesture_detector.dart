@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:polyv_media_player/polyv_media_player.dart';
 import 'player_gesture_controller.dart';
 import 'seek_preview_overlay.dart';
-import 'volume_brightness_hint.dart';
 import '../double_tap_detector.dart';
 
 /// 播放器手势检测器
@@ -11,8 +10,6 @@ import '../double_tap_detector.dart';
 /// - 单击：显示控制栏（不切换播放/暂停）
 /// - 双击：全屏切换
 /// - 左右滑动：seek 进度
-/// - 左侧上下滑动：亮度调节
-/// - 右侧上下滑动：音量调节
 class PlayerGestureDetector extends StatefulWidget {
   /// 子组件（通常是视频视图）
   final Widget child;
@@ -189,14 +186,6 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
                                 .toInt(),
                         duration: widget.playerController.state.duration
                             .toInt(),
-                      );
-                    case GestureType.brightnessAdjust:
-                    case GestureType.volumeAdjust:
-                      return VolumeBrightnessHint(
-                        type: state.type,
-                        value: state.type == GestureType.brightnessAdjust
-                            ? state.brightness
-                            : state.volume,
                       );
                     default:
                       return const SizedBox.shrink();

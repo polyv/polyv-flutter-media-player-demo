@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:polyv_media_player/polyv_media_player.dart';
 
 /// 手势类型枚举
 ///
@@ -12,17 +10,11 @@ enum GestureType {
 
   /// 左右滑动 seek（进度控制）
   horizontalSeek,
-
-  /// 左侧上下滑动亮度调节
-  brightnessAdjust,
-
-  /// 右侧上下滑动音量调节
-  volumeAdjust,
 }
 
 /// 手势状态模型
 ///
-/// 管理滑动手势的当前状态，包括类型、进度、亮度和音量值
+/// 管理滑动手势的当前状态，包括类型和进度
 @immutable
 class GestureState {
   /// 当前手势类型
@@ -31,20 +23,12 @@ class GestureState {
   /// seek 进度 (0-1)
   final double seekProgress;
 
-  /// 亮度值 (0-1)
-  final double brightness;
-
-  /// 音量值 (0-1)
-  final double volume;
-
   /// 是否显示提示 UI
   final bool showHint;
 
   const GestureState({
     this.type = GestureType.none,
     this.seekProgress = 0,
-    this.brightness = 0.5,
-    this.volume = 0.5,
     this.showHint = false,
   });
 
@@ -52,15 +36,11 @@ class GestureState {
   GestureState copyWith({
     GestureType? type,
     double? seekProgress,
-    double? brightness,
-    double? volume,
     bool? showHint,
   }) {
     return GestureState(
       type: type ?? this.type,
       seekProgress: seekProgress ?? this.seekProgress,
-      brightness: brightness ?? this.brightness,
-      volume: volume ?? this.volume,
       showHint: showHint ?? this.showHint,
     );
   }
@@ -71,14 +51,12 @@ class GestureState {
     return other is GestureState &&
         other.type == type &&
         other.seekProgress == seekProgress &&
-        other.brightness == brightness &&
-        other.volume == volume &&
         other.showHint == showHint;
   }
 
   @override
   int get hashCode {
-    return Object.hash(type, seekProgress, brightness, volume, showHint);
+    return Object.hash(type, seekProgress, showHint);
   }
 }
 
@@ -86,8 +64,6 @@ class GestureState {
 ///
 /// 负责处理视频播放区域的滑动手势，包括：
 /// - 左右滑动：快进/快退
-/// - 左侧上下滑动：调节亮度
-/// - 右侧上下滑动：调节音量
 ///
 /// 使用 Provider 模式，手势状态变化时通知监听器更新 UI
 class PlayerGestureController extends ChangeNotifier {
@@ -115,12 +91,6 @@ class PlayerGestureController extends ChangeNotifier {
 
   /// 视频总时长（毫秒），用于 seek 计算
   int _duration = 0;
-
-  /// Platform Channel 用于调用原生方法
-  static const _channel = MethodChannel(PlayerApi.methodChannelName);
-
-  /// 当前系统亮度缓存（用于初始化滑动起点）
-  double? _cachedBrightness;
 
   /// 最后一次识别的手势类型（用于测试）
   GestureType _lastGestureType = GestureType.none;
@@ -160,8 +130,6 @@ class PlayerGestureController extends ChangeNotifier {
     _updateState(
       GestureState(
         seekProgress: _state.seekProgress,
-        brightness: _state.brightness,
-        volume: _state.volume,
       ),
     );
   }
@@ -170,8 +138,6 @@ class PlayerGestureController extends ChangeNotifier {
   ///
   /// 根据滑动方向和位置执行对应的操作：
   /// - 水平滑动：seek 进度
-  /// - 左侧垂直滑动：调节亮度
-  /// - 右侧垂直滑动：调节音量
   void handleDragUpdate(DragUpdateDetails details, Size screenSize) {
     final startPos = _startPosition;
     if (startPos == null) return;
@@ -195,17 +161,8 @@ class PlayerGestureController extends ChangeNotifier {
           // 水平滑动 - seek
           _startSeekProgress = _state.seekProgress;
           _updateState(_state.copyWith(type: GestureType.horizontalSeek));
-        } else {
-          // 垂直滑动 - 判断左侧还是右侧（使用起始位置）
-          final isLeftSide = startPos.dx < screenSize.width / 2;
-          if (isLeftSide) {
-            // 左侧 - 亮度
-            _updateState(_state.copyWith(type: GestureType.brightnessAdjust));
-          } else {
-            // 右侧 - 音量
-            _updateState(_state.copyWith(type: GestureType.volumeAdjust));
-          }
         }
+        // 垂直滑动忽略（不处理音量和亮度调节）
       } else {
         // 滑动距离未达到阈值，不处理
         return;
@@ -216,12 +173,6 @@ class PlayerGestureController extends ChangeNotifier {
     switch (_state.type) {
       case GestureType.horizontalSeek:
         _handleSeekUpdate(dx, screenSize.width);
-        break;
-      case GestureType.brightnessAdjust:
-        _handleBrightnessUpdate(dy, screenSize.height);
-        break;
-      case GestureType.volumeAdjust:
-        _handleVolumeUpdate(dy, screenSize.height);
         break;
       default:
         break;
@@ -234,7 +185,6 @@ class PlayerGestureController extends ChangeNotifier {
   /// 处理滑动结束
   ///
   /// 如果是 seek 手势，返回目标 seek 位置供调用者执行
-  /// 其他手势会立即执行对应的系统操作
   int? handleDragEnd() {
     int? seekPosition;
 
@@ -256,8 +206,6 @@ class PlayerGestureController extends ChangeNotifier {
     _updateState(
       GestureState(
         type: GestureType.none,
-        brightness: _state.brightness,
-        volume: _state.volume,
         seekProgress: _state.seekProgress,
         showHint: _state.showHint, // 保留提示状态
       ),
@@ -281,8 +229,6 @@ class PlayerGestureController extends ChangeNotifier {
     _updateState(
       GestureState(
         type: GestureType.none,
-        brightness: _state.brightness,
-        volume: _state.volume,
         seekProgress: _state.seekProgress,
       ),
     );
@@ -312,86 +258,6 @@ class PlayerGestureController extends ChangeNotifier {
     newProgress = newProgress.clamp(0.0, 1.0);
 
     _updateState(_state.copyWith(seekProgress: newProgress));
-  }
-
-  /// 处理亮度更新
-  ///
-  /// 根据垂直滑动距离调整屏幕亮度
-  /// 上滑增加亮度，下滑降低亮度
-  void _handleBrightnessUpdate(double dy, double screenHeight) {
-    // 使用状态中的当前值作为起点（初始为 0.5）
-    final startValue = _state.brightness;
-
-    // 首次调节时异步获取系统亮度并更新缓存（用于下次滑动）
-    if (_cachedBrightness == null) {
-      _fetchSystemBrightness();
-    }
-
-    // 屏幕高度的 0.4 倍作为灵敏度基准
-    final delta = dy / (screenHeight * 0.4);
-    var newBrightness = startValue - delta; // 上增下减
-    newBrightness = newBrightness.clamp(0.0, 1.0);
-
-    // 更新缓存和系统亮度
-    _cachedBrightness = newBrightness;
-    _updateSystemBrightness(newBrightness);
-
-    _updateState(_state.copyWith(brightness: newBrightness));
-  }
-
-  /// 处理音量更新
-  ///
-  /// 根据垂直滑动距离调整播放音量
-  /// 上滑增加音量，下滑降低音量
-  void _handleVolumeUpdate(double dy, double screenHeight) {
-    // 使用状态中的当前值作为起点（初始为 0.5）
-    final startValue = _state.volume;
-
-    // 屏幕高度的 0.4 倍作为灵敏度基准
-    final delta = dy / (screenHeight * 0.4);
-    var newVolume = startValue - delta; // 上增下减
-    newVolume = newVolume.clamp(0.0, 1.0);
-
-    // 更新系统音量
-    _updateSystemVolume(newVolume);
-
-    _updateState(_state.copyWith(volume: newVolume));
-  }
-
-  /// 获取当前系统亮度（异步）
-  void _fetchSystemBrightness() {
-    MethodChannelHandler.getScreenBrightness(_channel)
-        .then((value) {
-          _cachedBrightness = value;
-        })
-        .catchError((e) {
-          debugPrint('PlayerGestureController: 获取亮度失败: $e');
-          _cachedBrightness = 0.5;
-        });
-  }
-
-  /// 更新系统屏幕亮度
-  ///
-  /// 通过 Platform Channel 调用原生 API
-  /// iOS: [UIScreen mainScreen].brightness = brightness;
-  /// Android: window.attributes.screenBrightness = brightness;
-  void _updateSystemBrightness(double brightness) {
-    MethodChannelHandler.setScreenBrightness(_channel, brightness).catchError((
-      e,
-    ) {
-      debugPrint('PlayerGestureController: 设置亮度失败: $e');
-    });
-  }
-
-  /// 更新系统音量
-  ///
-  /// 通过 Platform Channel 调用原生 API
-  /// iOS: 使用 MPVolumeView 的滑块控件（实际通过系统音量控制）
-  /// Android: audioManager.setStreamVolume(...)
-  void _updateSystemVolume(double volume) {
-    MethodChannelHandler.setVolume(_channel, volume).catchError((e) {
-      debugPrint('PlayerGestureController: 设置音量失败: $e');
-    });
   }
 
   /// 显示提示

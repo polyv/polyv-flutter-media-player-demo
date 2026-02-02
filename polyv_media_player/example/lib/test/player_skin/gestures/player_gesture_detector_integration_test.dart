@@ -4,7 +4,6 @@ import 'package:polyv_media_player/polyv_media_player.dart';
 import '../../../player_skin/gestures/player_gesture_controller.dart';
 import '../../../player_skin/gestures/player_gesture_detector.dart';
 import '../../../player_skin/gestures/seek_preview_overlay.dart';
-import '../../../player_skin/gestures/volume_brightness_hint.dart';
 
 void main() {
   group('PlayerGestureDetector Integration Tests', () {
@@ -126,8 +125,8 @@ void main() {
       });
     });
 
-    group('P0 - 场景2: 左侧上下滑动调节亮度', () {
-      testWidgets('[P0] 左侧向上滑动应该增加亮度', (tester) async {
+    group('P0 - 场景2: 垂直滑动不触发任何手势', () {
+      testWidgets('[P0] 左侧垂直滑动不应该识别任何手势', (tester) async {
         // GIVEN: 手势控制器和播放器
         gestureController.setDuration(60000);
 
@@ -147,8 +146,6 @@ void main() {
           ),
         );
 
-        final initialBrightness = gestureController.state.brightness;
-
         // WHEN: 在屏幕左侧（x < 195）向上滑动
         final startPos = DragStartDetails(
           globalPosition: const Offset(100, 500),
@@ -163,23 +160,18 @@ void main() {
 
         await tester.pump();
 
-        // THEN: 手势类型应该识别为 brightnessAdjust
-        expect(gestureController.lastGestureType, GestureType.none); // 进行中
-
-        // THEN: 亮度应该增加
-        expect(
-          gestureController.state.brightness,
-          greaterThan(initialBrightness),
-        );
+        // THEN: 手势类型应该仍然为 none（垂直滑动被忽略）
+        expect(gestureController.lastGestureType, GestureType.none);
+        expect(gestureController.state.type, GestureType.none);
 
         // 手势结束
         gestureController.handleDragEnd();
         await tester.pump(const Duration(seconds: 3));
 
-        expect(gestureController.lastGestureType, GestureType.brightnessAdjust);
+        expect(gestureController.lastGestureType, GestureType.none);
       });
 
-      testWidgets('[P0] 左侧向下滑动应该降低亮度', (tester) async {
+      testWidgets('[P0] 右侧垂直滑动不应该识别任何手势', (tester) async {
         gestureController.setDuration(60000);
 
         await tester.pumpWidget(
@@ -197,100 +189,6 @@ void main() {
             ),
           ),
         );
-
-        final initialBrightness = gestureController.state.brightness;
-
-        // WHEN: 在屏幕左侧向下滑动
-        final startPos = DragStartDetails(
-          globalPosition: const Offset(100, 300),
-        );
-        gestureController.handleDragStart(startPos);
-
-        final updateDetails = DragUpdateDetails(
-          globalPosition: const Offset(100, 500),
-          delta: const Offset(0, 200),
-        );
-        gestureController.handleDragUpdate(updateDetails, const Size(390, 844));
-
-        await tester.pump();
-
-        // THEN: 亮度应该降低
-        expect(gestureController.state.brightness, lessThan(initialBrightness));
-
-        // 手势结束
-        gestureController.handleDragEnd();
-        await tester.pump(const Duration(seconds: 3));
-
-        expect(gestureController.lastGestureType, GestureType.brightnessAdjust);
-      });
-    });
-
-    group('P0 - 场景3: 右侧上下滑动调节音量', () {
-      testWidgets('[P0] 右侧向上滑动应该增加音量', (tester) async {
-        gestureController.setDuration(60000);
-
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: PlayerGestureDetector(
-                gestureController: gestureController,
-                playerController: mockPlayerController,
-                child: const SizedBox(
-                  width: 390,
-                  height: 844,
-                  child: ColoredBox(color: Colors.black),
-                ),
-              ),
-            ),
-          ),
-        );
-
-        final initialVolume = gestureController.state.volume;
-
-        // WHEN: 在屏幕右侧（x > 195）向上滑动
-        final startPos = DragStartDetails(
-          globalPosition: const Offset(300, 500),
-        );
-        gestureController.handleDragStart(startPos);
-
-        final updateDetails = DragUpdateDetails(
-          globalPosition: const Offset(300, 300),
-          delta: const Offset(0, -200),
-        );
-        gestureController.handleDragUpdate(updateDetails, const Size(390, 844));
-
-        await tester.pump();
-
-        // THEN: 音量应该增加
-        expect(gestureController.state.volume, greaterThan(initialVolume));
-
-        // 手势结束
-        gestureController.handleDragEnd();
-        await tester.pump(const Duration(seconds: 3));
-
-        expect(gestureController.lastGestureType, GestureType.volumeAdjust);
-      });
-
-      testWidgets('[P0] 右侧向下滑动应该降低音量', (tester) async {
-        gestureController.setDuration(60000);
-
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: PlayerGestureDetector(
-                gestureController: gestureController,
-                playerController: mockPlayerController,
-                child: const SizedBox(
-                  width: 390,
-                  height: 844,
-                  child: ColoredBox(color: Colors.black),
-                ),
-              ),
-            ),
-          ),
-        );
-
-        final initialVolume = gestureController.state.volume;
 
         // WHEN: 在屏幕右侧向下滑动
         final startPos = DragStartDetails(
@@ -306,19 +204,19 @@ void main() {
 
         await tester.pump();
 
-        // THEN: 音量应该降低
-        expect(gestureController.state.volume, lessThan(initialVolume));
+        // THEN: 手势类型应该仍然为 none（垂直滑动被忽略）
+        expect(gestureController.state.type, GestureType.none);
 
         // 手势结束
         gestureController.handleDragEnd();
         await tester.pump(const Duration(seconds: 3));
 
-        expect(gestureController.lastGestureType, GestureType.volumeAdjust);
+        expect(gestureController.lastGestureType, GestureType.none);
       });
     });
 
-    group('P0 - 场景4: 滑动方向判断', () {
-      testWidgets('[P0] 水平滑动应该触发seek而不是亮度/音量', (tester) async {
+    group('P0 - 场景3: 滑动方向判断', () {
+      testWidgets('[P0] 水平滑动应该触发seek', (tester) async {
         gestureController.setDuration(60000);
 
         await tester.pumpWidget(
@@ -361,7 +259,7 @@ void main() {
         expect(gestureController.lastGestureType, GestureType.horizontalSeek);
       });
 
-      testWidgets('[P0] 垂直滑动应该触发亮度/音量而不是seek', (tester) async {
+      testWidgets('[P0] 垂直滑动不应该触发任何手势', (tester) async {
         gestureController.setDuration(60000);
 
         await tester.pumpWidget(
@@ -398,8 +296,8 @@ void main() {
         gestureController.handleDragEnd();
         await tester.pump(const Duration(seconds: 3));
 
-        // THEN: 应该识别为垂直滑动 (亮度)
-        expect(gestureController.lastGestureType, GestureType.brightnessAdjust);
+        // THEN: 垂直滑动应该被忽略，不识别为任何手势
+        expect(gestureController.lastGestureType, GestureType.none);
       });
 
       testWidgets('[P0] 小幅滑动不应该触发手势（阈值过滤）', (tester) async {
@@ -448,7 +346,7 @@ void main() {
       });
     });
 
-    group('P1 - 场景5: 锁屏状态', () {
+    group('P1 - 场景4: 锁屏状态', () {
       testWidgets('[P1] 锁屏状态下滑动手势应该被禁用', (tester) async {
         gestureController.setDuration(60000);
 
@@ -554,7 +452,7 @@ void main() {
       });
     });
 
-    group('P1 - 场景6: 手势冲突处理', () {
+    group('P1 - 场景5: 手势冲突处理', () {
       testWidgets('[P1] 单纯单击应该触发onTap回调', (tester) async {
         gestureController.setDuration(60000);
 
@@ -681,86 +579,6 @@ void main() {
 
         // THEN: 应该显示 SeekPreviewOverlay（手势进行中）
         expect(find.byType(SeekPreviewOverlay), findsOneWidget);
-
-        // 清理
-        gestureController.handleDragEnd();
-        await tester.pump(const Duration(seconds: 3));
-      });
-
-      testWidgets('[P2] 亮度手势应该显示VolumeBrightnessHint', (tester) async {
-        gestureController.setDuration(60000);
-
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: PlayerGestureDetector(
-                gestureController: gestureController,
-                playerController: mockPlayerController,
-                child: const SizedBox(
-                  width: 390,
-                  height: 844,
-                  child: ColoredBox(color: Colors.black),
-                ),
-              ),
-            ),
-          ),
-        );
-
-        // WHEN: 在左侧执行垂直滑动（直接调用方法）
-        final startPos = DragStartDetails(
-          globalPosition: const Offset(100, 400),
-        );
-        gestureController.handleDragStart(startPos);
-
-        final updateDetails = DragUpdateDetails(
-          globalPosition: const Offset(100, 200),
-          delta: const Offset(0, -200),
-        );
-        gestureController.handleDragUpdate(updateDetails, const Size(390, 844));
-        await tester.pump();
-
-        // THEN: 应该显示 VolumeBrightnessHint（手势进行中）
-        expect(find.byType(VolumeBrightnessHint), findsOneWidget);
-
-        // 清理
-        gestureController.handleDragEnd();
-        await tester.pump(const Duration(seconds: 3));
-      });
-
-      testWidgets('[P2] 音量手势应该显示VolumeBrightnessHint', (tester) async {
-        gestureController.setDuration(60000);
-
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: PlayerGestureDetector(
-                gestureController: gestureController,
-                playerController: mockPlayerController,
-                child: const SizedBox(
-                  width: 390,
-                  height: 844,
-                  child: ColoredBox(color: Colors.black),
-                ),
-              ),
-            ),
-          ),
-        );
-
-        // WHEN: 在右侧执行垂直滑动（直接调用方法）
-        final startPos = DragStartDetails(
-          globalPosition: const Offset(300, 400),
-        );
-        gestureController.handleDragStart(startPos);
-
-        final updateDetails = DragUpdateDetails(
-          globalPosition: const Offset(300, 200),
-          delta: const Offset(0, -200),
-        );
-        gestureController.handleDragUpdate(updateDetails, const Size(390, 844));
-        await tester.pump();
-
-        // THEN: 应该显示 VolumeBrightnessHint（手势进行中）
-        expect(find.byType(VolumeBrightnessHint), findsOneWidget);
 
         // 清理
         gestureController.handleDragEnd();

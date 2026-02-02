@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'player_gesture_controller.dart';
 
@@ -7,29 +6,6 @@ void main() {
   // 初始化 Flutter Test Binding
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  // 设置 mock Method Channel
-  const channel = MethodChannel('com.polyv.media_player/player');
-
-  setUpAll(() {
-    // 注册 mock Method Channel 处理器，避免测试中调用原生方法
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
-          switch (methodCall.method) {
-            case 'getScreenBrightness':
-              return 0.5;
-            case 'setScreenBrightness':
-            case 'setVolume':
-              return null;
-            default:
-              return MissingPluginException();
-          }
-        });
-  });
-
-  tearDownAll(() {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, null);
-  });
   group('PlayerGestureController', () {
     late PlayerGestureController controller;
 
@@ -49,14 +25,6 @@ void main() {
 
       test('创建控制器时 seekProgress 初始值为 0', () {
         expect(controller.state.seekProgress, 0.0);
-      });
-
-      test('创建控制器时 brightness 初始值为 0.5', () {
-        expect(controller.state.brightness, 0.5);
-      });
-
-      test('创建控制器时 volume 初始值为 0.5', () {
-        expect(controller.state.volume, 0.5);
       });
 
       test('创建控制器时 showHint 初始值为 false', () {
@@ -92,7 +60,7 @@ void main() {
         expect(controller.state.showHint, isTrue);
       });
 
-      test('左侧垂直滑动应该识别为 brightnessAdjust', () async {
+      test('垂直滑动不应该识别任何手势', () async {
         controller.setDuration(60000);
 
         // 模拟左侧向下滑动
@@ -112,32 +80,8 @@ void main() {
           controller.handleDragUpdate(updateDetails, screenSize);
         }
 
-        expect(controller.state.type, GestureType.brightnessAdjust);
-        expect(controller.state.showHint, isTrue);
-      });
-
-      test('右侧垂直滑动应该识别为 volumeAdjust', () async {
-        controller.setDuration(60000);
-
-        // 模拟右侧向下滑动
-        final startDetails = DragStartDetails(
-          globalPosition: const Offset(300, 400), // 右侧
-        );
-
-        controller.handleDragStart(startDetails);
-
-        // 垂直滑动超过阈值
-        final updateDetails = DragUpdateDetails(
-          globalPosition: const Offset(300, 450),
-          delta: const Offset(0, 50),
-        );
-
-        for (var i = 0; i < 5; i++) {
-          controller.handleDragUpdate(updateDetails, screenSize);
-        }
-
-        expect(controller.state.type, GestureType.volumeAdjust);
-        expect(controller.state.showHint, isTrue);
+        // 垂直滑动应该被忽略，不识别为任何手势
+        expect(controller.state.type, GestureType.none);
       });
 
       test('滑动距离未达到阈值时不应该识别手势', () async {
@@ -273,7 +217,7 @@ void main() {
 
         controller.handleDragStart(startDetails);
 
-        // 垂直滑动（亮度）
+        // 垂直滑动（不触发任何手势）
         final updateDetails = DragUpdateDetails(
           globalPosition: const Offset(100, 450),
           delta: const Offset(0, 50),
@@ -286,148 +230,6 @@ void main() {
         final seekPosition = controller.handleDragEnd();
 
         expect(seekPosition, isNull);
-      });
-    });
-
-    group('亮度调节', () {
-      final screenSize = const Size(390, 844);
-
-      test('向上滑动应该增加亮度', () async {
-        controller.setDuration(60000);
-
-        final startDetails = DragStartDetails(
-          globalPosition: const Offset(100, 400), // 左侧
-        );
-
-        controller.handleDragStart(startDetails);
-
-        // 向上滑动
-        final updateDetails = DragUpdateDetails(
-          globalPosition: const Offset(100, 300),
-          delta: const Offset(0, -100),
-        );
-
-        for (var i = 0; i < 10; i++) {
-          controller.handleDragUpdate(updateDetails, screenSize);
-        }
-
-        expect(controller.state.brightness, greaterThan(0.5));
-      });
-
-      test('向下滑动应该降低亮度', () async {
-        controller.setDuration(60000);
-
-        final startDetails = DragStartDetails(
-          globalPosition: const Offset(100, 400), // 左侧
-        );
-
-        controller.handleDragStart(startDetails);
-
-        // 向下滑动
-        final updateDetails = DragUpdateDetails(
-          globalPosition: const Offset(100, 500),
-          delta: const Offset(0, 100),
-        );
-
-        for (var i = 0; i < 10; i++) {
-          controller.handleDragUpdate(updateDetails, screenSize);
-        }
-
-        expect(controller.state.brightness, lessThan(0.5));
-      });
-
-      test('亮度应该限制在 0-1 范围内', () async {
-        controller.setDuration(60000);
-
-        final startDetails = DragStartDetails(
-          globalPosition: const Offset(100, 400),
-        );
-
-        controller.handleDragStart(startDetails);
-
-        // 向上大幅度滑动
-        final updateDetails = DragUpdateDetails(
-          globalPosition: const Offset(100, 100),
-          delta: const Offset(0, -300),
-        );
-
-        for (var i = 0; i < 20; i++) {
-          controller.handleDragUpdate(updateDetails, screenSize);
-        }
-
-        expect(controller.state.brightness, lessThanOrEqualTo(1.0));
-        expect(controller.state.brightness, greaterThanOrEqualTo(0.0));
-      });
-    });
-
-    group('音量调节', () {
-      final screenSize = const Size(390, 844);
-
-      test('向上滑动应该增加音量', () async {
-        controller.setDuration(60000);
-
-        final startDetails = DragStartDetails(
-          globalPosition: const Offset(300, 400), // 右侧
-        );
-
-        controller.handleDragStart(startDetails);
-
-        // 向上滑动
-        final updateDetails = DragUpdateDetails(
-          globalPosition: const Offset(300, 300),
-          delta: const Offset(0, -100),
-        );
-
-        for (var i = 0; i < 10; i++) {
-          controller.handleDragUpdate(updateDetails, screenSize);
-        }
-
-        expect(controller.state.volume, greaterThan(0.5));
-      });
-
-      test('向下滑动应该降低音量', () async {
-        controller.setDuration(60000);
-
-        final startDetails = DragStartDetails(
-          globalPosition: const Offset(300, 400), // 右侧
-        );
-
-        controller.handleDragStart(startDetails);
-
-        // 向下滑动
-        final updateDetails = DragUpdateDetails(
-          globalPosition: const Offset(300, 500),
-          delta: const Offset(0, 100),
-        );
-
-        for (var i = 0; i < 10; i++) {
-          controller.handleDragUpdate(updateDetails, screenSize);
-        }
-
-        expect(controller.state.volume, lessThan(0.5));
-      });
-
-      test('音量应该限制在 0-1 范围内', () async {
-        controller.setDuration(60000);
-
-        final startDetails = DragStartDetails(
-          globalPosition: const Offset(300, 400),
-        );
-
-        controller.handleDragStart(startDetails);
-
-        // 向上大幅度滑动
-        final updateDetails = DragUpdateDetails(
-          globalPosition: const Offset(300, 100),
-          delta: const Offset(0, -300),
-        );
-
-        for (var i = 0; i < 20; i++) {
-          controller.handleDragUpdate(updateDetails, screenSize);
-        }
-
-        expect(controller.state.volume, lessThanOrEqualTo(1.0));
-        expect(controller.state.volume, greaterThanOrEqualTo(0.0));
       });
     });
 
@@ -512,17 +314,13 @@ void main() {
         const state = GestureState(
           type: GestureType.horizontalSeek,
           seekProgress: 0.5,
-          brightness: 0.3,
-          volume: 0.7,
           showHint: true,
         );
 
-        final newState = state.copyWith(brightness: 0.8);
+        final newState = state.copyWith(seekProgress: 0.8);
 
         expect(newState.type, GestureType.horizontalSeek);
-        expect(newState.seekProgress, 0.5);
-        expect(newState.brightness, 0.8);
-        expect(newState.volume, 0.7);
+        expect(newState.seekProgress, 0.8);
         expect(newState.showHint, true);
       });
 
@@ -538,7 +336,7 @@ void main() {
         );
 
         const state3 = GestureState(
-          type: GestureType.brightnessAdjust,
+          type: GestureType.none,
           seekProgress: 0.5,
         );
 
