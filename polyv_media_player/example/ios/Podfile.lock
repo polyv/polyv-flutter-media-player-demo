@@ -1,0 +1,119 @@
+PODS:
+  - Flutter (1.0.0)
+  - integration_test (0.0.1):
+    - Flutter
+  - PLVAliHttpDNS (3.2.0)
+  - PLVCLogan (1.1.0)
+  - PLVFDB (1.0.6)
+  - PLVFoundationSDK/AbstractBase (1.30.2):
+    - PLVFoundationSDK/AuthorizationManager
+    - PLVFoundationSDK/BaseUtils
+    - PLVFoundationSDK/ConsoleLogger
+    - PLVFoundationSDK/ErrorCode
+    - PLVFoundationSDK/JSBridgeSDK
+    - PLVFoundationSDK/Logan
+    - PLVFoundationSDK/LogReporter
+    - PLVFoundationSDK/NetworkUtils
+    - PLVFoundationSDK/OtherPart
+    - PLVFoundationSDK/ProgressHUD
+    - PLVFoundationSDK/Reachability
+    - PLVFoundationSDK/SafeModel
+    - PLVFoundationSDK/WebviewBridge
+  - PLVFoundationSDK/AuthorizationManager (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVFoundationSDK/BaseUtils (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVFoundationSDK/ConsoleLogger (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVFoundationSDK/ErrorCode (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVFoundationSDK/Headers (1.30.2)
+  - PLVFoundationSDK/JSBridgeSDK (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVFoundationSDK/Logan (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVFoundationSDK/LogReporter (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVFoundationSDK/NetworkUtils (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVFoundationSDK/OtherPart (1.30.2):
+    - PLVCLogan (= 1.1.0)
+  - PLVFoundationSDK/ProgressHUD (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVFoundationSDK/Reachability (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVFoundationSDK/SafeModel (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVFoundationSDK/WebviewBridge (1.30.2):
+    - PLVFoundationSDK/Headers
+  - PLVIJKPlayer (0.15.3)
+  - PLVLOpenSSL (1.1.12101)
+  - PLVTimer (0.0.4)
+  - polyv_media_player (0.0.1):
+    - Flutter
+    - PLVFDB (~> 1.0.5)
+    - PLVFoundationSDK/AbstractBase (~> 1.30.2)
+    - PLVLOpenSSL (~> 1.1.12101)
+    - PolyvMediaPlayerSDK (~> 2.7.2)
+    - SSZipArchive (~> 2.0)
+  - PolyvMediaPlayerSDK (2.7.2):
+    - PolyvMediaPlayerSDK/Core (= 2.7.2)
+    - PolyvMediaPlayerSDK/Player (= 2.7.2)
+    - PolyvMediaPlayerSDK/ThirdPart (= 2.7.2)
+  - PolyvMediaPlayerSDK/Core (2.7.2):
+    - PLVTimer (~> 0.0.2)
+  - PolyvMediaPlayerSDK/Player (2.7.2):
+    - PLVIJKPlayer (~> 0.15.3)
+  - PolyvMediaPlayerSDK/ThirdPart (2.7.2):
+    - PLVAliHttpDNS (~> 3.2.0)
+  - shared_preferences_foundation (0.0.1):
+    - Flutter
+    - FlutterMacOS
+  - SSZipArchive (2.4.3)
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - integration_test (from `.symlinks/plugins/integration_test/ios`)
+  - polyv_media_player (from `.symlinks/plugins/polyv_media_player/ios`)
+  - shared_preferences_foundation (from `.symlinks/plugins/shared_preferences_foundation/darwin`)
+
+SPEC REPOS:
+  trunk:
+    - PLVAliHttpDNS
+    - PLVCLogan
+    - PLVFDB
+    - PLVFoundationSDK
+    - PLVIJKPlayer
+    - PLVLOpenSSL
+    - PLVTimer
+    - PolyvMediaPlayerSDK
+    - SSZipArchive
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  integration_test:
+    :path: ".symlinks/plugins/integration_test/ios"
+  polyv_media_player:
+    :path: ".symlinks/plugins/polyv_media_player/ios"
+  shared_preferences_foundation:
+    :path: ".symlinks/plugins/shared_preferences_foundation/darwin"
+
+SPEC CHECKSUMS:
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
+  PLVAliHttpDNS: a32b1be5d57f179cd86cef208da7946c8c3cef11
+  PLVCLogan: e813f0621928c2ce3e728c7e660e4577434ea8b1
+  PLVFDB: c8cf611cf4bded4d09a97d559461528be178e73d
+  PLVFoundationSDK: 723d15212445e7ddcc0a2a14b035c49a11b097cb
+  PLVIJKPlayer: 50b5423e5970c7401ec0f3e6cc1b29aba9831aa3
+  PLVLOpenSSL: b4729f40d0a1d7b2be1897d40b5dc3c08ff59bf1
+  PLVTimer: 80d2d24d32bb2e9588d089fc25974ff778259ae1
+  polyv_media_player: 999feb2981a623515013bdfe7e23be18748a6a2e
+  PolyvMediaPlayerSDK: 3bce84df1b7b8529b9205044204b84f1df39045d
+  shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
+  SSZipArchive: fe6a26b2a54d5a0890f2567b5cc6de5caa600aef
+
+PODFILE CHECKSUM: 1f7e1e7a7e7ecad6dde15f5c53b8d9f581981524
+
+COCOAPODS: 1.16.2

@@ -1,0 +1,82 @@
+group = "com.polyv.polyv_media_player"
+version = "1.0-SNAPSHOT"
+
+buildscript {
+    ext.kotlin_version = "2.1.0"
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.9.1")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version")
+    }
+}
+
+allprojects {
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        mavenCentral()
+        maven {
+            def polyvRepoUser = project.findProperty('polyvRepoUser') ?: ''
+            def polyvRepoPassword = project.findProperty('polyvRepoPassword') ?: ''
+            if (polyvRepoUser && polyvRepoPassword) {
+                credentials {
+                    username = polyvRepoUser
+                    password = polyvRepoPassword
+                }
+            }
+            url = uri('https://packages.aliyun.com/maven/repository/2102846-release-8EVsoM/')
+        }
+        maven { url = uri('https://jitpack.io') }
+    }
+}
+
+apply plugin: "com.android.library"
+apply plugin: "kotlin-android"
+
+android {
+    namespace = "com.polyv.polyv_media_player"
+
+    compileSdk = 34
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_11
+    }
+
+    sourceSets {
+        main.java.srcDirs += "src/main/kotlin"
+        test.java.srcDirs += "src/test/kotlin"
+    }
+
+    defaultConfig {
+        minSdk = 21
+    }
+
+    testOptions {
+        unitTests.all {
+            useJUnitPlatform()
+
+            testLogging {
+               events "passed", "skipped", "failed", "standardOut", "standardError"
+               outputs.upToDateWhen {false}
+               showStandardStreams = true
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation("net.polyv.android:media-player-full:2.7.2")
+    implementation("net.polyv.android:media-player-sdk-addon-business:2.7.2")
+    implementation("net.polyv.android:media-player-sdk-addon-download:2.7.2")
+
+    testImplementation("org.jetbrains.kotlin:kotlin-test")
+    testImplementation("org.mockito:mockito-core:5.0.0")
+}

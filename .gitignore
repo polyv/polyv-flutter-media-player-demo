@@ -1,0 +1,48 @@
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+.symlinks/
+
+# Android
+**/android/.gradle/
+**/android/.kotlin/
+**/android/**/build/
+**/android/**/generated/
+**/android/local.properties
+**/android/captures/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# BMM artifacts (tracking recommended)
+# Uncomment to ignore if you prefer not to track planning docs
+# docs/planning-artifacts/
+# docs/implementation-artifacts/
+
+# Claude AI
+# .claude/
+
+# Windsurf CI
+# .windsurf/
+
+# Temporary files
+*.log
+*.tmp
+*.temp
+.mcp.json
+.agent

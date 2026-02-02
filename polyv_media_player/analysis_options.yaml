@@ -1,0 +1,11 @@
+include: package:flutter_lints/flutter.yaml
+
+# Additional information about this file can be found at
+# https://dart.dev/guides/language/analysis-options
+
+linter:
+  rules:
+    # flutter_test is automatically provided by Flutter SDK
+    depend_on_referenced_packages: false
+    # Allow function expressions for callbacks
+    prefer_function_declarations_over_variables: false
