@@ -621,14 +621,14 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      // THEN: 显示三个功能按钮
+      // THEN: 显示两个功能按钮（字幕设置按钮已暂时隐藏）
       expect(find.text('音频模式'), findsOneWidget);
-      expect(find.text('字幕设置'), findsOneWidget);
+      expect(find.text('字幕设置'), findsNothing); // 字幕设置按钮已隐藏
       expect(find.text('下载'), findsOneWidget);
 
       // 检查图标是否存在
       expect(find.byIcon(Icons.headphones_outlined), findsOneWidget);
-      expect(find.byIcon(Icons.subtitles_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.subtitles_outlined), findsNothing); // 字幕图标已隐藏
       expect(find.byIcon(Icons.download_rounded), findsOneWidget);
 
       controller.dispose();
@@ -703,7 +703,7 @@ void main() {
       controller.dispose();
     });
 
-    testWidgets('[P1] 点击字幕设置按钮显示暂不支持提示', (tester) async {
+    testWidgets('[P1] 字幕设置按钮已隐藏', (tester) async {
       // GIVEN: 创建 PlayerController
       final controller = PlayerController();
 
@@ -724,13 +724,13 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      // WHEN: 点击字幕设置按钮
-      final subtitleButton = find.text('字幕设置');
-      await tester.tap(subtitleButton);
-      await tester.pumpAndSettle();
+      // THEN: 字幕设置按钮已隐藏（功能暂时移除）
+      expect(find.text('字幕设置'), findsNothing);
+      expect(find.byIcon(Icons.subtitles_outlined), findsNothing);
 
-      // THEN: 显示提示信息（指向播放器控制栏的字幕按钮）
-      expect(find.text('请使用播放器控制栏的字幕按钮切换字幕'), findsOneWidget);
+      // 只显示音频模式和下载按钮
+      expect(find.text('音频模式'), findsOneWidget);
+      expect(find.text('下载'), findsOneWidget);
 
       controller.dispose();
     });
