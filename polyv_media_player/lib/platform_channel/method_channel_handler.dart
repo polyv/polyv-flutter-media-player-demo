@@ -220,10 +220,15 @@ class MethodChannelHandler {
     MethodChannel channel,
     String vid, {
     String? title,
+    String? quality, // 清晰度值: "480p", "720p", "1080p"
   }) {
     return channel.invokeMethod<void>(
       PlayerMethod.startDownload,
-      <String, dynamic>{'vid': vid, if (title != null) 'title': title},
+      <String, dynamic>{
+        'vid': vid,
+        if (title != null) 'title': title,
+        if (quality != null) 'quality': quality,
+      },
     );
   }
 }

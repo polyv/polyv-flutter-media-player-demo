@@ -468,11 +468,17 @@ class _SettingsMenuState extends State<SettingsMenu> {
       debugPrint('[SettingsMenu] Calling startDownload with vid: $vid');
       debugPrint('[SettingsMenu] Controller state vid: ${widget.controller.state.vid}');
 
-      // 调用原生层创建下载任务
+      // 获取当前播放的清晰度
+      final currentQuality = widget.controller.currentQuality;
+      final qualityValue = currentQuality?.value; // "480p", "720p", "1080p"
+      debugPrint('[SettingsMenu] Current quality: $qualityValue');
+
+      // 调用原生层创建下载任务，传递当前清晰度
       await MethodChannelHandler.startDownload(
         const MethodChannel(PlayerApi.methodChannelName),
         vid,
         title: widget.videoTitle,
+        quality: qualityValue,
       );
 
       debugPrint(

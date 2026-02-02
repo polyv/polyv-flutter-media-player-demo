@@ -1108,13 +1108,13 @@ class PolyvMediaPlayerPlugin :
                 if (taskDict != null) {
                     val vid = taskDict["vid"] as? String
 
-                    // 检测重复 vid
+                    // 检测重复 vid - 跳过重复任务，只保留第一个
                     if (vid != null && vid in seenVids) {
-                        android.util.Log.d("PolyvMediaPlayerPlugin", "WARNING: Duplicate vid found in download list: vid=$vid")
-                    } else {
-                        if (vid != null) {
-                            seenVids.add(vid)
-                        }
+                        android.util.Log.d("PolyvMediaPlayerPlugin", "WARNING: Skipping duplicate vid in download list: vid=$vid")
+                        continue
+                    }
+                    if (vid != null) {
+                        seenVids.add(vid)
                     }
 
                     // 过滤掉已删除的任务
@@ -1153,6 +1153,9 @@ class PolyvMediaPlayerPlugin :
 
         val args = call.arguments as? Map<*, *>
         val vid = args?.get("vid")?.toString()?.trim()
+        val quality = args?.get("quality")?.toString()?.trim() // "480p", "720p", "1080p"
+
+        android.util.Log.d("PolyvMediaPlayerPlugin", "VID: $vid, Quality: $quality")
 
         if (vid.isNullOrBlank()) {
             android.util.Log.e("PolyvMediaPlayerPlugin", "VID is empty")
@@ -1208,15 +1211,18 @@ class PolyvMediaPlayerPlugin :
         android.util.Log.d("PolyvMediaPlayerPlugin", "Creating download resource for vid: $vid")
 
         try {
-            // 创建 VOD 媒体资源（用于下载）- 使用与播放器相同的方式
+            // 创建 VOD 媒体资源（用于下载）
             val mediaResource = PLVMediaResource.vod(vid, authentication, viewerParam, downloadRoots)
+            android.util.Log.d("PolyvMediaPlayerPlugin", "Media resource created for vid: $vid")
 
-            android.util.Log.d("PolyvMediaPlayerPlugin", "Media resource created, getting downloader")
+            // 使用 BITRATE_AUTO 让 SDK 自动选择清晰度
+            val targetBitRate = PLVMediaBitRate.BITRATE_AUTO
+            android.util.Log.d("PolyvMediaPlayerPlugin", "Using BITRATE_AUTO, quality parameter: $quality (ignored)")
 
             // 使用 PLVMediaDownloaderManager.getDownloader 获取或创建下载器
-            // 参考 polyv-android-media-player-sdk-demo 示例代码
+            // 如果已存在相同(媒体资源, 比特率)的下载器，会返回已存在的；否则创建新的
             val downloader = runCatching {
-                PLVMediaDownloaderManager.getDownloader(mediaResource, PLVMediaBitRate.BITRATE_AUTO)
+                PLVMediaDownloaderManager.getDownloader(mediaResource, targetBitRate)
             }.getOrElse { e ->
                 android.util.Log.e("PolyvMediaPlayerPlugin", "Failed to get downloader: ${e.message}, stack: ${e.stackTraceToString()}")
                 result.error("SDK_ERROR", "Failed to create downloader: ${e.message}", null)
@@ -1229,12 +1235,39 @@ class PolyvMediaPlayerPlugin :
                 return
             }
 
-            android.util.Log.d("PolyvMediaPlayerPlugin", "Downloader created, initial status: ${downloader.listenerRegistry.status.value}")
+            val initialStatus = downloader.listenerRegistry.status.value
+            android.util.Log.d("PolyvMediaPlayerPlugin", "Downloader retrieved, initial status: $initialStatus")
 
-            // 启动下载
-            PLVMediaDownloaderManager.startDownloader(downloader)
+            // 记录初始状态，确保状态监控器能正确检测到状态变化
+            downloadPreviousStates[vid] = initialStatus
 
-            android.util.Log.d("PolyvMediaPlayerPlugin", "Download task created successfully for vid: $vid, status after start: ${downloader.listenerRegistry.status.value}")
+            // 根据状态决定是否需要启动下载
+            // 删除后重新下载时，状态可能是 PAUSED 或其他状态，需要确保启动
+            when (initialStatus) {
+                PLVMediaDownloadStatus.NOT_STARTED,
+                PLVMediaDownloadStatus.PAUSED,
+                PLVMediaDownloadStatus.WAITING -> {
+                    android.util.Log.d("PolyvMediaPlayerPlugin", "Starting downloader from status: $initialStatus")
+                    PLVMediaDownloaderManager.startDownloader(downloader)
+                }
+                PLVMediaDownloadStatus.DOWNLOADING -> {
+                    android.util.Log.d("PolyvMediaPlayerPlugin", "Downloader already in DOWNLOADING status")
+                }
+                PLVMediaDownloadStatus.COMPLETED -> {
+                    android.util.Log.d("PolyvMediaPlayerPlugin", "Downloader already COMPLETED")
+                }
+                is PLVMediaDownloadStatus.ERROR -> {
+                    android.util.Log.d("PolyvMediaPlayerPlugin", "Downloader in ERROR status, retrying")
+                    PLVMediaDownloaderManager.startDownloader(downloader)
+                }
+                null -> {
+                    android.util.Log.d("PolyvMediaPlayerPlugin", "Status is null, trying to start")
+                    PLVMediaDownloaderManager.startDownloader(downloader)
+                }
+            }
+
+            android.util.Log.d("PolyvMediaPlayerPlugin", "Download task created successfully for vid: $vid")
+
             result.success(null)
         } catch (e: Exception) {
             android.util.Log.e("PolyvMediaPlayerPlugin", "Failed to create download task: ${e.message}, stack: ${e.stackTraceToString()}")

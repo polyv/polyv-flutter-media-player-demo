@@ -399,8 +399,9 @@ class _LongVideoPageState extends State<LongVideoPage> {
   ///
   /// 委托给状态机，传入当前播放状态。
   /// 但在用户首次交互之前，控制条始终隐藏。
+  /// 播放结束时，控制条始终隐藏，只显示重播按钮。
   bool get _isControlBarVisible =>
-      _hasUserInteracted && _controlBarStateMachine.isVisible(_isPlaying);
+      !_isEnded && _hasUserInteracted && _controlBarStateMachine.isVisible(_isPlaying);
 
   @override
   void initState() {

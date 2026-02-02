@@ -467,7 +467,16 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 
         // 保存视频对象，用于清晰度切换
         self.currentVideo = video;
-        self.currentQualityIndex = video.preferredQuality;
+
+        // 从 UserDefaults 恢复用户上次选择的清晰度（如果有）
+        NSInteger savedQualityIndex = [[NSUserDefaults standardUserDefaults] integerForKey:@"PLVLastSelectedQuality"];
+        if (savedQualityIndex > 0) {
+            self.currentQualityIndex = savedQualityIndex;
+            NSLog(@"[PolyvPlugin] Restored quality index from UserDefaults: %ld", (long)savedQualityIndex);
+        } else {
+            // 没有保存的清晰度，使用默认的高清（索引2）
+            self.currentQualityIndex = 2;
+        }
 
         // 发送清晰度数据
         [self sendQualityDataForVideo:video];
@@ -538,8 +547,8 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         // 设置本地优先播放
         [self.player setLocalPrior:YES];
 
-        // 加载本地视频
-        [self.player playWithLocalVideo:localVideo];
+        // 加载本地视频（使用 setVideo 方法，PLVLocalVideo 继承自 PLVVodMediaVideo）
+        [self.player setVideo:localVideo];
         NSLog(@"[PolyvPlugin] Local video loaded, playbackState: %ld", (long)self.player.playbackState);
 
         // 显式重置播放位置到开头
@@ -553,7 +562,16 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
                 if (video && !error) {
                     // 保存视频对象用于清晰度和字幕
                     self.currentVideo = video;
-                    self.currentQualityIndex = video.preferredQuality;
+
+                    // 从 UserDefaults 恢复用户上次选择的清晰度（如果有）
+                    NSInteger savedQualityIndex = [[NSUserDefaults standardUserDefaults] integerForKey:@"PLVLastSelectedQuality"];
+                    if (savedQualityIndex > 0) {
+                        self.currentQualityIndex = savedQualityIndex;
+                        NSLog(@"[PolyvPlugin] Restored quality index from UserDefaults (offline): %ld", (long)savedQualityIndex);
+                    } else {
+                        // 没有保存的清晰度，使用默认的高清（索引2）
+                        self.currentQualityIndex = 2;
+                    }
 
                     // 发送清晰度数据
                     [self sendQualityDataForVideo:video];
@@ -699,14 +717,8 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     // UI 层显示: 流畅, 高清, 超清（对应 SDK 的 1, 2, 3）
     NSInteger sdkIndex = index + 1;
 
-    // 根据清晰度数量判断是否支持该清晰度
-    if (self.currentVideo && sdkIndex >= self.currentVideo.qualityCount) {
-        NSLog(@"[PolyvPlugin] WARNING: Quality index %ld exceeds available count %d", (long)sdkIndex, self.currentVideo.qualityCount);
-        result([FlutterError errorWithCode:kErrorCodeNotInitialized
-                                    message:@"Quality index not available"
-                                    details:nil]);
-        return;
-    }
+    // 不再检查 qualityCount，因为某些视频的 qualityCount 值可能不准确
+    // 直接让 SDK 处理清晰度切换，如果清晰度不可用 SDK 会自动处理
 
     // 记录当前播放位置和状态，用于切换后恢复
     // 为了避免切换清晰度期间继续播放一小段再 seek 回来导致的音频重复感，
@@ -727,6 +739,11 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     [self.player setPlayQuality:quality];
     // 保存 SDK 层的索引
     self.currentQualityIndex = sdkIndex;
+
+    // 持久化保存用户选择的清晰度，以便下次进入页面时恢复
+    [[NSUserDefaults standardUserDefaults] setInteger:sdkIndex forKey:@"PLVLastSelectedQuality"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    NSLog(@"[PolyvPlugin] Saved quality index: %ld", (long)sdkIndex);
 
     // 发送更新后的清晰度数据（传入 UI 层的索引）
     [self sendQualityDataForVideo:self.currentVideo updateCurrentIndex:sdkIndex];
@@ -955,10 +972,17 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 
     NSMutableArray<NSDictionary *> *taskList = [NSMutableArray array];
 
-    // 获取所有下载任务
-    NSArray<PLVDownloadInfo *> *allDownloads = [[PLVDownloadMediaManager sharedManager] requestDownloadInfoList];
+    // 获取所有下载任务（SDK 没有提供统一的 requestDownloadInfoList 方法）
+    // 需要分别获取已完成和未完成的任务
+    NSArray<PLVDownloadInfo *> *unfinishedDownloads = [[PLVDownloadMediaManager sharedManager] getUnfinishedDownloadList];
+    NSArray<PLVDownloadInfo *> *finishedDownloads = [[PLVDownloadMediaManager sharedManager] getFinishedDownloadList];
 
-    NSLog(@"[PolyvPlugin] Total tasks from SDK: %lu", (unsigned long)allDownloads.count);
+    // 合并两个数组
+    NSMutableArray<PLVDownloadInfo *> *allDownloads = [NSMutableArray arrayWithArray:unfinishedDownloads];
+    [allDownloads addObjectsFromArray:finishedDownloads];
+
+    NSLog(@"[PolyvPlugin] Total tasks from SDK: %lu (unfinished: %lu, finished: %lu)",
+          (unsigned long)allDownloads.count, (unsigned long)unfinishedDownloads.count, (unsigned long)finishedDownloads.count);
 
     // 用于检测重复 vid 的集合
     NSMutableSet<NSString *> *seenVids = [NSMutableSet set];
@@ -1002,7 +1026,8 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     
     // 文件大小信息
     long long totalBytes = info.filesize;
-    long long downloadedBytes = info.downloadedBytes;
+    // SDK 没有 downloadedBytes 属性，使用 progress * filesize 计算
+    long long downloadedBytes = (long long)(info.progress * info.filesize);
     
     // 下载速度（SDK 可能不直接提供，设为 0）
     int bytesPerSecond = 0;
@@ -1109,13 +1134,14 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     }
 
     // 调用 SDK 删除下载任务
+    // 注意：removeDownloadTask:error: 方法返回 void，通过 error 参数判断是否成功
     NSError *error = nil;
-    BOOL success = [[PLVDownloadMediaManager sharedManager] removeDownloadTask:downloadInfo error:&error];
+    [[PLVDownloadMediaManager sharedManager] removeDownloadTask:downloadInfo error:&error];
 
-    if (!success || error) {
+    if (error) {
         NSLog(@"[PolyvPlugin] ERROR: Failed to delete download task - %@", error.localizedDescription);
         result([FlutterError errorWithCode:@"DELETE_FAILED"
-                                   message:error.localizedDescription ?: @"Failed to delete download task"
+                                   message:error.localizedDescription
                                    details:nil]);
         return;
     }
@@ -1139,7 +1165,8 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 - (void)handleStartDownload:(NSDictionary *)args result:(FlutterResult)result {
     NSLog(@"[PolyvPlugin] ========== handleStartDownload called ==========");
     NSString *vid = args[@"vid"];
-    NSLog(@"[PolyvPlugin] VID: %@", vid);
+    NSString *quality = args[@"quality"]; // "480p", "720p", "1080p"
+    NSLog(@"[PolyvPlugin] VID: %@, Quality: %@", vid, quality);
 
     if (!vid || vid.length == 0) {
         NSLog(@"[PolyvPlugin] ERROR: VID is empty");
@@ -1170,6 +1197,20 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         return;
     }
 
+    // 根据传入的清晰度值映射到 iOS SDK 的清晰度枚举
+    // 默认使用高清
+    PLVVodMediaQuality downloadQuality = PLVVodMediaQualityHigh;
+    if (quality) {
+        if ([quality isEqualToString:@"480p"]) {
+            downloadQuality = PLVVodMediaQualityStandard;
+        } else if ([quality isEqualToString:@"720p"]) {
+            downloadQuality = PLVVodMediaQualityHigh;
+        } else if ([quality isEqualToString:@"1080p"]) {
+            downloadQuality = PLVVodMediaQualityUltra;
+        }
+    }
+    NSLog(@"[PolyvPlugin] Using quality: %ld", (long)downloadQuality);
+
     // 请求视频信息
     [PLVVodMediaVideo requestVideoPriorityCacheWithVid:vid completion:^(PLVVodMediaVideo *video, NSError *error) {
         if (error) {
@@ -1188,9 +1229,9 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
             return;
         }
 
-        // 添加下载任务（使用默认清晰度）
+        // 添加下载任务（使用当前播放的清晰度）
         @try {
-            PLVDownloadInfo *downloadInfo = [[PLVDownloadMediaManager sharedManager] addVideoTask:video quality:PLVVodMediaQualityStandard];
+            PLVDownloadInfo *downloadInfo = [[PLVDownloadMediaManager sharedManager] addVideoTask:video quality:downloadQuality];
 
             if (!downloadInfo) {
                 NSLog(@"[PolyvPlugin] ERROR: Failed to create download task");
@@ -1200,7 +1241,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
                 return;
             }
 
-            NSLog(@"[PolyvPlugin] Download task created successfully for vid: %@", vid);
+            NSLog(@"[PolyvPlugin] Download task created successfully for vid: %@, quality: %ld", vid, (long)downloadQuality);
 
             // 如果 autoStart 为 NO，需要手动启动下载
             if (![PLVDownloadMediaManager sharedManager].autoStart) {
@@ -1248,6 +1289,15 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     }
     self.currentVid = nil;
     self.currentVideo = nil;
+
+    // 保存当前清晰度到 UserDefaults（持久化），这样下次进入页面时可以恢复
+    // 注意：currentQualityIndex 是 SDK 层的索引（0=自动, 1=流畅, 2=高清, 3=超清）
+    if (self.currentQualityIndex > 0) {
+        [[NSUserDefaults standardUserDefaults] setInteger:self.currentQualityIndex forKey:@"PLVLastSelectedQuality"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+        NSLog(@"[PolyvPlugin] Saved quality index: %ld", (long)self.currentQualityIndex);
+    }
+
     self.currentQualityIndex = 0;
 
     self.subtitleModule = nil;
@@ -1430,6 +1480,10 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
             self.shouldSeekToStartOnPrepared = NO;
             [self.player seekToTime:0.0];
         }
+
+        // 播放器准备好后，确保字幕Label在最上层（播放器视图可能覆盖了字幕）
+        [self bringSubtitleLabelsToFront];
+
         [self sendStateChangeEvent:kStatePrepared];
 
         // 视频准备完成后，发送字幕轨道信息给 Flutter 层
@@ -1508,6 +1562,18 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 
 - (void)PLVVodMediaPlayer:(PLVVodMediaPlayer *)vodMediaPlayer playedProgress:(CGFloat)playedProgress playedTimeString:(NSString *)playedTimeString durationTimeString:(NSString *)durationTimeString {
     [self sendProgressEvent];
+
+    // 确保字幕Label始终在最上层（播放器视图可能重新创建导致字幕被覆盖）
+    // 每秒只打印一次日志，避免日志过多
+    static NSTimeInterval lastLogTime = 0;
+    NSTimeInterval currentTime = vodMediaPlayer.currentPlaybackTime;
+    if (currentTime - lastLogTime >= 1.0) {
+        NSLog(@"[PolyvPlugin] playedProgress: %.2f, subtitleModule: %@", playedProgress, self.subtitleModule ? @"YES" : @"NO");
+        lastLogTime = currentTime;
+    }
+
+    [self bringSubtitleLabelsToFront];
+
     if (self.subtitleModule) {
         [self.subtitleModule showSubtilesWithPlaytime:vodMediaPlayer.currentPlaybackTime];
     }
@@ -1536,55 +1602,37 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     }
 
     // iOS SDK 的清晰度枚举: 0=自动, 1=流畅, 2=高清, 3=超清
-    // 与 Android 端保持一致：流畅, 高清, 超清（不包含"自动"选项）
+    // 与 Android 端保持一致：总是显示所有清晰度选项（流畅, 高清, 超清）
+    // 不再使用 qualityCount 限制，因为某些视频的 qualityCount 值可能不准确
     NSArray<NSDictionary *> *qualityDefinitions = @[
         @{@"enum": @(PLVVodMediaQualityStandard), @"description": @"流畅", @"value": @"480p"},
         @{@"enum": @(PLVVodMediaQualityHigh), @"description": @"高清", @"value": @"720p"},
         @{@"enum": @(PLVVodMediaQualityUltra), @"description": @"超清", @"value": @"1080p"},
     ];
 
-    // qualityCount 表示实际可用的清晰度数量
-    // 减1是因为去掉了"自动"选项，与 Android 保持一致
-    int qualityCount = video.qualityCount > 0 ? video.qualityCount - 1 : 0;
-    NSLog(@"[PolyvPlugin] Available quality count (without auto): %d", qualityCount);
-
-    // 限制：最多添加 qualityCount 个清晰度选项
-    int maxIndex = MIN(qualityCount, (int)qualityDefinitions.count);
-
-    for (int i = 0; i < maxIndex; i++) {
-        NSDictionary *def = qualityDefinitions[i];
-        PLVVodMediaQuality qualityEnum = (PLVVodMediaQuality)[def[@"enum"] integerValue];
-
-        // 所有在 qualityCount 范围内的清晰度都标记为可用
-        BOOL isAvailable = YES;
-
+    // 总是添加所有三个清晰度选项，与 Android 端保持一致
+    for (NSDictionary *def in qualityDefinitions) {
         [qualitiesList addObject:@{
             @"description": def[@"description"],
             @"value": def[@"value"],
-            @"isAvailable": @(isAvailable),
-        }];
-
-        NSLog(@"[PolyvPlugin] Added quality: %@ (%@), available: %d", def[@"description"], def[@"value"], isAvailable);
-    }
-
-    // 如果 qualityCount 为 0，至少添加默认清晰度
-    if (qualityCount == 0) {
-        [qualitiesList addObject:@{
-            @"description": @"流畅",
-            @"value": @"480p",
             @"isAvailable": @YES,
         }];
-        currentIndex = 0;
+        NSLog(@"[PolyvPlugin] Added quality: %@ (%@)", def[@"description"], def[@"value"]);
     }
 
-    // 调整 currentIndex：iOS 端原本包含"自动"，需要减1来匹配新的列表
+    // 调整 currentIndex：iOS 端原本包含"自动"（索引0），需要减1来匹配新的列表
+    // 原索引: 0=自动, 1=流畅, 2=高清, 3=超清
+    // 新索引: 0=流畅, 1=高清, 2=超清
     if (currentIndex > 0) {
         currentIndex = currentIndex - 1;
+    } else {
+        // 如果原本是"自动"（索引0），默认切换到"高清"（新索引1）
+        currentIndex = 1;
     }
 
     // 确保 currentIndex 在有效范围内
     if (currentIndex >= qualitiesList.count) {
-        currentIndex = 0;
+        currentIndex = 1; // 默认高清
     }
 
     NSLog(@"[PolyvPlugin] Sending quality data: %@", qualitiesList);
@@ -1612,6 +1660,9 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     }
 
     UIView *container = self.videoViewController.containerView;
+    NSLog(@"[PolyvPlugin] ========== setupSubtitleModuleIfNeededForVideo called ==========");
+    NSLog(@"[PolyvPlugin] container.bounds: %@", NSStringFromCGRect(container.bounds));
+    NSLog(@"[PolyvPlugin] subtitleLabel exists: %@", self.subtitleLabel ? @"YES" : @"NO");
 
     if (!self.subtitleLabel) {
         CGRect bounds = container.bounds;
@@ -1672,8 +1723,12 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         self.subtitleTopLabel = topLabel;
         self.subtitleLabel2 = bottomLabel2;
         self.subtitleTopLabel2 = topLabel2;
+
+        NSLog(@"[PolyvPlugin] Subtitle labels created and added to container");
+        NSLog(@"[PolyvPlugin] bottomLabel frame: %@", NSStringFromCGRect(bottomLabel.frame));
     } else {
         // 确保字幕 Label 始终在最上层（播放器视图可能覆盖了字幕）
+        NSLog(@"[PolyvPlugin] Subtitle labels already exist, bringing to front");
         [container bringSubviewToFront:self.subtitleTopLabel2];
         [container bringSubviewToFront:self.subtitleLabel2];
         [container bringSubviewToFront:self.subtitleTopLabel];
@@ -1682,14 +1737,23 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 
     if (!self.subtitleModule) {
         self.subtitleModule = [[PLVMediaPlayerSubtitleModule alloc] init];
+        NSLog(@"[PolyvPlugin] SubtitleModule created");
     }
 
     // 加载字幕模块（会加载默认字幕）
+    NSLog(@"[PolyvPlugin] Loading subtitle module with video...");
     [self.subtitleModule loadSubtitlsWithVideoModel:video
                                               label:self.subtitleLabel
                                            topLabel:self.subtitleTopLabel
                                              label2:self.subtitleLabel2
                                           topLabel2:self.subtitleTopLabel2];
+    NSLog(@"[PolyvPlugin] Subtitle module loaded");
+
+    // 延迟确保字幕Label在最上层（播放器视图可能在字幕之后才被创建）
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"[PolyvPlugin] Delayed bringSubtitleLabelsToFront called");
+        [self bringSubtitleLabelsToFront];
+    });
 
     // 如果用户之前有字幕选择，恢复用户选择
     if (self.subtitleStateInitialized && self.currentSubtitleEnabled) {
@@ -1715,14 +1779,99 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     }
 }
 
+/// 确保字幕Label始终在最上层（播放器视图可能覆盖了字幕）
+- (void)bringSubtitleLabelsToFront {
+    if (!self.videoViewController || !self.videoViewController.containerView) {
+        return;
+    }
+
+    UIView *container = self.videoViewController.containerView;
+
+    // 打印视图层级用于调试
+    NSLog(@"[PolyvPlugin] ========== bringSubtitleLabelsToFront ==========");
+    NSLog(@"[PolyvPlugin] container.bounds: %@, container.frame: %@", NSStringFromCGRect(container.bounds), NSStringFromCGRect(container.frame));
+    NSLog(@"[PolyvPlugin] containerView subviews count: %lu", (unsigned long)container.subviews.count);
+
+    // 更新字幕Label的frame以适应containerView的当前大小
+    // 因为containerView的size可能会变化（例如横竖屏切换、视图调整等）
+    [self updateSubtitleLabelFrames];
+
+    // 打印字幕Label的frame
+    NSLog(@"[PolyvPlugin] subtitleLabel.frame: %@", NSStringFromCGRect(self.subtitleLabel.frame));
+    NSLog(@"[PolyvPlugin] subtitleTopLabel.frame: %@", NSStringFromCGRect(self.subtitleTopLabel.frame));
+    NSLog(@"[PolyvPlugin] subtitleLabel.text: '%@'", self.subtitleLabel.text);
+
+    for (int i = 0; i < container.subviews.count; i++) {
+        UIView *subview = container.subviews[i];
+        NSLog(@"[PolyvPlugin]   [%d] %@ (frame=%@, hidden=%d)", i,
+              NSStringFromClass(subview.class),
+              NSStringFromCGRect(subview.frame),
+              subview.isHidden);
+    }
+
+    // 确保所有字幕Label都在最上层
+    if (self.subtitleTopLabel2 && self.subtitleTopLabel2.superview == container) {
+        [container bringSubviewToFront:self.subtitleTopLabel2];
+        NSLog(@"[PolyvPlugin] Brought subtitleTopLabel2 to front");
+    }
+    if (self.subtitleLabel2 && self.subtitleLabel2.superview == container) {
+        [container bringSubviewToFront:self.subtitleLabel2];
+        NSLog(@"[PolyvPlugin] Brought subtitleLabel2 to front");
+    }
+    if (self.subtitleTopLabel && self.subtitleTopLabel.superview == container) {
+        [container bringSubviewToFront:self.subtitleTopLabel];
+        NSLog(@"[PolyvPlugin] Brought subtitleTopLabel to front");
+    }
+    if (self.subtitleLabel && self.subtitleLabel.superview == container) {
+        [container bringSubviewToFront:self.subtitleLabel];
+        NSLog(@"[PolyvPlugin] Brought subtitleLabel to front");
+    }
+}
+
+/// 更新字幕Label的frame以适应containerView的当前大小
+- (void)updateSubtitleLabelFrames {
+    if (!self.videoViewController || !self.videoViewController.containerView) {
+        return;
+    }
+
+    UIView *container = self.videoViewController.containerView;
+    CGRect bounds = container.bounds;
+
+    // 如果container的size无效，使用当前字幕Label的frame或屏幕尺寸
+    if (bounds.size.width <= 0 || bounds.size.height <= 0) {
+        bounds = [UIScreen mainScreen].bounds;
+    }
+
+    CGFloat width = bounds.size.width;
+    CGFloat height = bounds.size.height;
+
+    // 更新所有字幕Label的frame
+    if (self.subtitleLabel) {
+        self.subtitleLabel.frame = CGRectMake(16, height - 80.0, width - 32.0, 40.0);
+    }
+    if (self.subtitleTopLabel) {
+        self.subtitleTopLabel.frame = CGRectMake(16, height - 120.0, width - 32.0, 40.0);
+    }
+    if (self.subtitleLabel2) {
+        self.subtitleLabel2.frame = CGRectMake(16, height - 40.0, width - 32.0, 30.0);
+    }
+    if (self.subtitleTopLabel2) {
+        self.subtitleTopLabel2.frame = CGRectMake(16, height - 160.0, width - 32.0, 30.0);
+    }
+}
+
 #pragma mark - Story 9.8: Download Status Monitoring
 
 /// 启动下载状态监控
 - (void)startDownloadStatusMonitoring {
     self.downloadPreviousStates = [NSMutableDictionary dictionary];
 
-    // 记录初始状态
-    NSArray<PLVDownloadInfo *> *allDownloads = [[PLVDownloadMediaManager sharedManager] requestDownloadInfoList];
+    // 记录初始状态（SDK 没有提供统一的 requestDownloadInfoList 方法）
+    NSArray<PLVDownloadInfo *> *unfinishedDownloads = [[PLVDownloadMediaManager sharedManager] getUnfinishedDownloadList];
+    NSArray<PLVDownloadInfo *> *finishedDownloads = [[PLVDownloadMediaManager sharedManager] getFinishedDownloadList];
+    NSMutableArray<PLVDownloadInfo *> *allDownloads = [NSMutableArray arrayWithArray:unfinishedDownloads];
+    [allDownloads addObjectsFromArray:finishedDownloads];
+
     for (PLVDownloadInfo *info in allDownloads) {
         NSString *vid = info.vid ?: @"";
         self.downloadPreviousStates[vid] = @(info.state);
@@ -1749,7 +1898,11 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 
 /// 检查下载状态变化并推送事件
 - (void)checkDownloadStatusChanges {
-    NSArray<PLVDownloadInfo *> *allDownloads = [[PLVDownloadMediaManager sharedManager] requestDownloadInfoList];
+    // 获取所有下载任务（SDK 没有提供统一的 requestDownloadInfoList 方法）
+    NSArray<PLVDownloadInfo *> *unfinishedDownloads = [[PLVDownloadMediaManager sharedManager] getUnfinishedDownloadList];
+    NSArray<PLVDownloadInfo *> *finishedDownloads = [[PLVDownloadMediaManager sharedManager] getFinishedDownloadList];
+    NSMutableArray<PLVDownloadInfo *> *allDownloads = [NSMutableArray arrayWithArray:unfinishedDownloads];
+    [allDownloads addObjectsFromArray:finishedDownloads];
 
     for (PLVDownloadInfo *info in allDownloads) {
         NSString *vid = info.vid ?: @"";
@@ -1819,11 +1972,14 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     NSString *vid = info.vid ?: @"";
     if (vid.length == 0) return;
 
+    // SDK 没有 downloadedBytes 属性，使用 progress * filesize 计算
+    long long downloadedBytes = (long long)(info.progress * info.filesize);
+
     [self.downloadEventStreamHandler sendEvent:@{
         @"type": kDownloadEventTaskProgress,
         @"data": @{
             @"id": vid,
-            @"downloadedBytes": @(info.downloadedBytes),
+            @"downloadedBytes": @(downloadedBytes),
             @"totalBytes": @(info.filesize),
             @"bytesPerSecond": @(0), // iOS SDK 不直接提供速度信息
             @"status": [self convertDownloadStateToString:info.state]
@@ -1879,17 +2035,20 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     NSString *vid = info.vid ?: @"";
     if (vid.length == 0) return;
 
+    // SDK 没有 downloadedBytes 属性，使用 progress * filesize 计算
+    long long downloadedBytes = (long long)(info.progress * info.filesize);
+
     [self.downloadEventStreamHandler sendEvent:@{
         @"type": kDownloadEventTaskProgress,  // 使用 taskProgress 而不是 taskResumed，包含进度信息
         @"data": @{
             @"id": vid,
-            @"downloadedBytes": @(info.downloadedBytes),
+            @"downloadedBytes": @(downloadedBytes),
             @"totalBytes": @(info.filesize),
             @"bytesPerSecond": @(0), // iOS SDK 不直接提供速度信息
             @"status": @"downloading"
         }
     }];
-    NSLog(@"[PolyvPlugin] Send resumed event for vid=%@ with downloadedBytes=%lld", vid, info.downloadedBytes);
+    NSLog(@"[PolyvPlugin] Send resumed event for vid=%@ with downloadedBytes=%lld", vid, downloadedBytes);
 }
 
 @end
