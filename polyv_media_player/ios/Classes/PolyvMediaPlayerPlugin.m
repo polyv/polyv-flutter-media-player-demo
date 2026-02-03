@@ -1,6 +1,5 @@
 #import "PolyvMediaPlayerPlugin.h"
 #import "PLVVideoViewFactory.h"
-#import "PLVMediaPlayerSubtitleModule.h"
 #import "PLVFlutterEventStreamHandler.h"
 #import "PLVFlutterEventEmitter.h"
 #import "PLVFlutterDownloadMonitor.h"
@@ -33,12 +32,7 @@ static NSString *const kStateCompleted = @"completed";
 static NSString *const kStateError = @"error";
 
 // 下载事件类型
-static NSString *const kDownloadEventTaskProgress = @"taskProgress";
-static NSString *const kDownloadEventTaskCompleted = @"taskCompleted";
-static NSString *const kDownloadEventTaskFailed = @"taskFailed";
 static NSString *const kDownloadEventTaskRemoved = @"taskRemoved";
-static NSString *const kDownloadEventTaskPaused = @"taskPaused";
-static NSString *const kDownloadEventTaskResumed = @"taskResumed";
 
 // 静态实例，用于视频视图关联
 static PolyvMediaPlayerPlugin *_sharedInstance = nil;
@@ -61,18 +55,8 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 @property (nonatomic, strong) PLVVodMediaVideo *currentVideo; // 当前视频对象，用于获取清晰度信息
 @property (nonatomic, assign) NSInteger qualitySwitchOperationId;
 @property (nonatomic, assign) BOOL shouldSeekToStartOnPrepared;
-@property (nonatomic, strong) PLVMediaPlayerSubtitleModule *subtitleModule;
-@property (nonatomic, strong) UILabel *subtitleLabel;
-@property (nonatomic, strong) UILabel *subtitleTopLabel;
-@property (nonatomic, strong) UILabel *subtitleLabel2;
-@property (nonatomic, strong) UILabel *subtitleTopLabel2;
 // 记录当前设备方向，避免重复处理
 @property (nonatomic, assign) UIDeviceOrientation lastOrientation;
-// 保存用户选择的字幕配置，用于横竖屏切换后恢复
-@property (nonatomic, copy) NSString *currentSubtitleTrackKey;
-@property (nonatomic, assign) BOOL currentSubtitleEnabled;
-@property (nonatomic, assign) BOOL subtitleStateInitialized;
-
 // 账号配置相关属性
 @property (nonatomic, copy) NSString *userId;
 @property (nonatomic, copy) NSString *readToken;
@@ -80,10 +64,6 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 @property (nonatomic, copy) NSString *secretKey;
 @property (nonatomic, copy) NSString *env;          // 环境标识（预留）
 @property (nonatomic, copy) NSString *businessLine; // 业务线标识（预留）
-
-// Story 9.8: 下载状态跟踪（保留旧实现以便回滚；当前运行逻辑由 PLVFlutterDownloadMonitor 接管）
-@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *downloadPreviousStates;
-@property (nonatomic, strong) NSTimer *downloadStatusCheckTimer;
 
 - (void)sendQualityDataForVideo:(PLVVodMediaVideo *)video;
 - (void)sendQualityDataForVideo:(PLVVodMediaVideo *)video updateCurrentIndex:(NSInteger)updateIndex;
@@ -151,7 +131,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     // 启用设备方向通知
     [[UIDevice currentDevice] beginGeneratingDeviceOrientationNotifications];
 
-    // Story 9.8: 初始化下载状态跟踪并启动定时器
+    // 启动下载状态监控
     [instance startDownloadStatusMonitoring];
 }
 
@@ -179,21 +159,6 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         NSLog(@"[PolyvPlugin] Display superview set: %@", self.player.displaySuperview);
     } else {
         NSLog(@"[PolyvPlugin] WARNING: videoViewController is still nil, will set up later");
-    }
-    
-    // 如果是新的 videoViewController，需要重新设置字幕 Label
-    // 因为旧的字幕 Label 添加在旧的 container 上，横竖屏切换后会失效
-    if (isNewViewController && self.currentVideo) {
-        NSLog(@"[PolyvPlugin] New videoViewController detected, resetting subtitle labels");
-        // 清空旧的字幕 Label 引用，让 setupSubtitleModuleIfNeededForVideo 重新创建
-        self.subtitleLabel = nil;
-        self.subtitleTopLabel = nil;
-        self.subtitleLabel2 = nil;
-        self.subtitleTopLabel2 = nil;
-        // 同时清空旧的 subtitleModule，避免它持有旧的 label 引用
-        self.subtitleModule = nil;
-        // 重新设置字幕
-        [self setupSubtitleModuleIfNeededForVideo:self.currentVideo];
     }
 }
 
@@ -231,22 +196,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 
         // 延迟一小段时间，等待视图布局动画完成
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (self.subtitleCoordinator) {
-                [self.subtitleCoordinator resetLabelsAndModule];
-            }
-            // 移除旧的字幕 label
-            [self.subtitleLabel removeFromSuperview];
-            [self.subtitleTopLabel removeFromSuperview];
-            [self.subtitleLabel2 removeFromSuperview];
-            [self.subtitleTopLabel2 removeFromSuperview];
-
-            // 清空引用
-            self.subtitleLabel = nil;
-            self.subtitleTopLabel = nil;
-            self.subtitleLabel2 = nil;
-            self.subtitleTopLabel2 = nil;
-            // 重新设置字幕
-            [self setupSubtitleModuleIfNeededForVideo:self.currentVideo];
+            [self.subtitleCoordinator resetLabelsAndModule];
         });
     }
 }
@@ -340,21 +290,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 // Lazy getter for player - 按照demo的模式创建播放器
 // 这样确保播放器和代理在视频加载之前就已经正确设置
 - (PLVVodMediaPlayer *)player {
-    if (self.playerSession) {
-        _player = [self.playerSession playerWithCoreDelegate:self vodDelegate:self];
-        return _player;
-    }
-    if (!_player) {
-        NSLog(@"[PolyvPlugin] ========== Creating player in lazy getter ==========");
-        _player = [[PLVVodMediaPlayer alloc] init];
-        _player.coreDelegate = self;
-        _player.delegateVodMediaPlayer = self;
-        _player.autoPlay = YES; // 自动播放，与原生 demo 一致
-        _player.videoToolBox = NO;
-        _player.rememberLastPosition = NO;
-        _player.seekType = PLVVodMediaPlaySeekTypePrecise;
-        NSLog(@"[PolyvPlugin] ========== Player created, delegates set ==========");
-    }
+    _player = [self.playerSession playerWithCoreDelegate:self vodDelegate:self];
     return _player;
 }
 
@@ -376,9 +312,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     self.qualitySwitchOperationId += 1;
     self.shouldSeekToStartOnPrepared = YES;
 
-    self.currentSubtitleTrackKey = nil;
-    self.currentSubtitleEnabled = NO;
-    self.subtitleStateInitialized = NO;
+    [self.subtitleCoordinator resetAll];
 
     // 确保账号已配置（优先使用已有配置，否则从 Info.plist 读取）
     if (![self ensureAccountConfiguredOrReturnError:result]) {
@@ -432,10 +366,10 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 
         self.currentVideo = video;
 
-        NSInteger savedQualityIndex = self.playerSession ? [self.playerSession lastSelectedQualityIndex] : [[NSUserDefaults standardUserDefaults] integerForKey:@"PLVLastSelectedQuality"];
+        NSInteger savedQualityIndex = [self.playerSession lastSelectedQualityIndex];
         if (savedQualityIndex > 0) {
             self.currentQualityIndex = savedQualityIndex;
-            NSLog(@"[PolyvPlugin] Restored quality index from UserDefaults: %ld", (long)savedQualityIndex);
+            NSLog(@"[PolyvPlugin] Restored quality index from playerSession: %ld", (long)savedQualityIndex);
         } else {
             self.currentQualityIndex = 2;
         }
@@ -445,34 +379,22 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         dispatch_async(dispatch_get_main_queue(), ^{
             if (self.videoViewController) {
                 NSLog(@"[PolyvPlugin] Setting up display superview BEFORE setVideo");
-                if (self.playerSession) {
-                    [self.playerSession preparePlayerWithVideo:video
-                                              displaySuperview:self.videoViewController.containerView
-                                                applyLocalPrior:NO
-                                                    localPrior:NO
-                                                 resetToStart:YES
-                                                  coreDelegate:self
-                                                   vodDelegate:self];
-                } else {
-                    [self.player setupDisplaySuperview:self.videoViewController.containerView];
-                    [self.player setVideo:video];
-                    [self.player seekToTime:0.0];
-                }
-                NSLog(@"[PolyvPlugin] Display superview set: %@", self.player.displaySuperview);
+                [self.playerSession preparePlayerWithVideo:video
+                                          displaySuperview:self.videoViewController.containerView
+                                            applyLocalPrior:NO
+                                                localPrior:NO
+                                             resetToStart:YES
+                                              coreDelegate:self
+                                               vodDelegate:self];
             } else {
                 NSLog(@"[PolyvPlugin] WARNING: videoViewController is still nil, will set up later");
-                if (self.playerSession) {
-                    [self.playerSession preparePlayerWithVideo:video
-                                              displaySuperview:nil
-                                                applyLocalPrior:NO
-                                                    localPrior:NO
-                                                 resetToStart:YES
-                                                  coreDelegate:self
-                                                   vodDelegate:self];
-                } else {
-                    [self.player setVideo:video];
-                    [self.player seekToTime:0.0];
-                }
+                [self.playerSession preparePlayerWithVideo:video
+                                          displaySuperview:nil
+                                            applyLocalPrior:NO
+                                                localPrior:NO
+                                             resetToStart:YES
+                                              coreDelegate:self
+                                               vodDelegate:self];
             }
 
             NSLog(@"[PolyvPlugin] Video set, playbackState: %ld", (long)self.player.playbackState);
@@ -484,16 +406,12 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         result(nil);
     };
 
-    if (self.playerSession) {
-        [self.playerSession requestVideoWithVid:vid completion:completionHandler];
-    } else {
-        [PLVVodMediaVideo requestVideoPriorityCacheWithVid:vid completion:completionHandler];
-    }
+    [self.playerSession requestVideoWithVid:vid completion:completionHandler];
 }
 
 /// 离线播放视频
 - (void)loadVideoOffline:(NSString *)vid result:(FlutterResult)result {
-    NSString *downloadDir = self.playerSession ? [self.playerSession downloadDir] : [[PLVDownloadMediaManager sharedManager] downloadDir];
+    NSString *downloadDir = [self.playerSession downloadDir];
     NSLog(@"[PolyvPlugin] Download directory: %@", downloadDir);
 
     if (!downloadDir || downloadDir.length == 0) {
@@ -509,12 +427,10 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     dispatch_async(dispatch_get_main_queue(), ^{
         if (self.videoViewController) {
             NSLog(@"[PolyvPlugin] Setting up display superview for offline playback");
-            if (!self.playerSession) {
-                [self.player setupDisplaySuperview:self.videoViewController.containerView];
-            }
+            [self.playerSession setupDisplaySuperview:self.videoViewController.containerView coreDelegate:self vodDelegate:self];
         }
 
-        PLVLocalVideo *localVideo = self.playerSession ? [self.playerSession localVideoWithVid:vid downloadDir:downloadDir] : [PLVLocalVideo localVideoWithVid:vid dir:downloadDir];
+        PLVLocalVideo *localVideo = [self.playerSession localVideoWithVid:vid downloadDir:downloadDir];
         if (!localVideo) {
             NSLog(@"[PolyvPlugin] ERROR: Failed to create local video for vid: %@", vid);
             [self sendErrorEventWithCode:@"OFFLINE_ERROR" message:@"Local video not found"];
@@ -525,19 +441,13 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
             return;
         }
 
-        if (self.playerSession) {
-            [self.playerSession preparePlayerWithVideo:localVideo
-                                      displaySuperview:(self.videoViewController ? self.videoViewController.containerView : nil)
-                                        applyLocalPrior:YES
-                                            localPrior:YES
-                                         resetToStart:YES
-                                          coreDelegate:self
-                                           vodDelegate:self];
-        } else {
-            [self.player setLocalPrior:YES];
-            [self.player setVideo:localVideo];
-            [self.player seekToTime:0.0];
-        }
+        [self.playerSession preparePlayerWithVideo:localVideo
+                                  displaySuperview:(self.videoViewController ? self.videoViewController.containerView : nil)
+                                    applyLocalPrior:YES
+                                        localPrior:YES
+                                     resetToStart:YES
+                                      coreDelegate:self
+                                       vodDelegate:self];
 
         NSLog(@"[PolyvPlugin] Local video loaded, playbackState: %ld", (long)self.player.playbackState);
         NSLog(@"[PolyvPlugin] Position reset to 0");
@@ -547,10 +457,10 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
                 if (video && !error) {
                     self.currentVideo = video;
 
-                    NSInteger savedQualityIndex = self.playerSession ? [self.playerSession lastSelectedQualityIndex] : [[NSUserDefaults standardUserDefaults] integerForKey:@"PLVLastSelectedQuality"];
+                    NSInteger savedQualityIndex = [self.playerSession lastSelectedQualityIndex];
                     if (savedQualityIndex > 0) {
                         self.currentQualityIndex = savedQualityIndex;
-                        NSLog(@"[PolyvPlugin] Restored quality index from UserDefaults (offline): %ld", (long)savedQualityIndex);
+                        NSLog(@"[PolyvPlugin] Restored quality index from playerSession (offline): %ld", (long)savedQualityIndex);
                     } else {
                         self.currentQualityIndex = 2;
                     }
@@ -564,11 +474,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
             });
         };
 
-        if (self.playerSession) {
-            [self.playerSession requestVideoWithVid:vid completion:offlineMetadataCompletion];
-        } else {
-            [PLVVodMediaVideo requestVideoPriorityCacheWithVid:vid completion:offlineMetadataCompletion];
-        }
+        [self.playerSession requestVideoWithVid:vid completion:offlineMetadataCompletion];
     });
 }
 
@@ -576,7 +482,6 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     NSLog(@"[PolyvPlugin] ========== handlePlay called ==========");
     NSLog(@"[PolyvPlugin] player exists: %@", self.player ? @"YES" : @"NO");
     if (!self.player) {
-        NSLog(@"[PolyvPlugin] ERROR: Player is nil!");
         result([FlutterError errorWithCode:kErrorCodeNotInitialized
                                     message:@"Player not initialized"
                                     details:nil]);
@@ -591,11 +496,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     // 确保在主线程上调用 play
     dispatch_async(dispatch_get_main_queue(), ^{
         NSLog(@"[PolyvPlugin] Calling play on main thread");
-        if (self.playerSession) {
-            [self.playerSession playWithCoreDelegate:self vodDelegate:self];
-        } else {
-            [self.player play];
-        }
+        [self.playerSession playWithCoreDelegate:self vodDelegate:self];
         NSLog(@"[PolyvPlugin] play method called, playbackState now: %ld", (long)self.player.playbackState);
 
         // 延迟检查状态
@@ -614,25 +515,13 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
                                      details:nil]);
          return;
      }
-     if (self.playerSession) {
-         [self.playerSession pauseWithCoreDelegate:self vodDelegate:self];
-     } else {
-         [self.player pause];
-     }
+     [self.playerSession pauseWithCoreDelegate:self vodDelegate:self];
      result(nil);
  }
 
  - (void)handleStop:(FlutterResult)result {
      // stop 不应该销毁播放器，只停止播放并重置进度
-     if (self.playerSession) {
-         [self.playerSession stopWithCoreDelegate:self vodDelegate:self];
-     } else {
-         PLVVodMediaPlayer *plvPlayer = _player;
-         if (plvPlayer) {
-             [plvPlayer pause];
-             [plvPlayer seekToTime:0];
-         }
-     }
+     [self.playerSession stopWithCoreDelegate:self vodDelegate:self];
      [self sendStateChangeEvent:kStateIdle];
      result(nil);
  }
@@ -645,15 +534,11 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
          return;
      }
 
-     NSInteger position = [args[@"position"] integerValue];
-     NSTimeInterval time = position / 1000.0;
-     if (self.playerSession) {
-         [self.playerSession seekToTime:time coreDelegate:self vodDelegate:self];
-     } else {
-         [self.player seekToTime:time];
-     }
-     result(nil);
- }
+      NSInteger position = [args[@"position"] integerValue];
+      NSTimeInterval time = position / 1000.0;
+      [self.playerSession seekToTime:time coreDelegate:self vodDelegate:self];
+      result(nil);
+  }
 
 - (void)handleSetPlaybackSpeed:(NSDictionary *)args result:(FlutterResult)result {
     NSLog(@"[PolyvPlugin] ========== handleSetPlaybackSpeed called ==========");
@@ -681,29 +566,18 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
      NSString *errorCode = nil;
      NSString *errorMessage = nil;
      BOOL success = NO;
-     if (self.playerSession) {
-         success = [self.playerSession setPlaybackSpeed:speed
-                                           coreDelegate:self
-                                            vodDelegate:self
-                                              errorCode:&errorCode
-                                           errorMessage:&errorMessage];
-     } else {
-         @try {
-             [self.player switchSpeedRate:speed];
-             success = YES;
-         } @catch (NSException *exception) {
-             errorCode = kErrorCodeNetworkError;
-             errorMessage = exception.reason;
-             success = NO;
-         }
-     }
+     success = [self.playerSession setPlaybackSpeed:speed
+                                       coreDelegate:self
+                                        vodDelegate:self
+                                          errorCode:&errorCode
+                                       errorMessage:&errorMessage];
 
-     if (!success) {
-         result([FlutterError errorWithCode:(errorCode ?: kErrorCodeNetworkError)
-                                     message:(errorMessage ?: @"Failed to set playback speed")
-                                     details:nil]);
-         return;
-     }
+    if (!success) {
+        result([FlutterError errorWithCode:(errorCode ?: kErrorCodeNetworkError)
+                                    message:(errorMessage ?: @"Failed to set playback speed")
+                                    details:nil]);
+        return;
+    }
 
      NSLog(@"[PolyvPlugin] Playback speed set to: %.2f", speed);
      [self.eventEmitter sendPlayerEvent:@{
@@ -988,145 +862,10 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 - (void)handleGetDownloadList:(FlutterResult)result {
     NSLog(@"[PolyvPlugin] ========== handleGetDownloadList called ==========");
 
-    if (self.downloadMonitor) {
-        result([self.downloadMonitor fetchDownloadTaskList]);
-        return;
+    if (!self.downloadMonitor) {
+        self.downloadMonitor = [[PLVFlutterDownloadMonitor alloc] initWithEventEmitter:self.eventEmitter];
     }
-
-    NSMutableArray<NSDictionary *> *taskList = [NSMutableArray array];
-
-    // 获取所有下载任务（SDK 没有提供统一的 requestDownloadInfoList 方法）
-    // 需要分别获取已完成和未完成的任务
-    NSArray<PLVDownloadInfo *> *unfinishedDownloads = [[PLVDownloadMediaManager sharedManager] getUnfinishedDownloadList];
-    NSArray<PLVDownloadInfo *> *finishedDownloads = [[PLVDownloadMediaManager sharedManager] getFinishedDownloadList];
-
-    // 合并两个数组
-    NSMutableArray<PLVDownloadInfo *> *allDownloads = [NSMutableArray arrayWithArray:unfinishedDownloads];
-    [allDownloads addObjectsFromArray:finishedDownloads];
-
-    NSLog(@"[PolyvPlugin] Total tasks from SDK: %lu (unfinished: %lu, finished: %lu)",
-          (unsigned long)allDownloads.count, (unsigned long)unfinishedDownloads.count, (unsigned long)finishedDownloads.count);
-
-    // 用于检测重复 vid 的集合
-    NSMutableSet<NSString *> *seenVids = [NSMutableSet set];
-
-    for (PLVDownloadInfo *info in allDownloads) {
-        NSDictionary *taskDict = [self convertDownloadInfoToDict:info];
-        if (taskDict) {
-            NSString *vid = taskDict[@"vid"];
-
-            // 检测重复 vid
-            if ([seenVids containsObject:vid]) {
-                NSLog(@"[PolyvPlugin] WARNING: Duplicate vid found in download list: vid=%@", vid);
-            } else {
-                [seenVids addObject:vid];
-            }
-
-            // 只过滤掉没有 vid 的无效任务
-            // 之前过滤 waiting 状态 + totalBytes=0 的任务导致新创建的任务被过滤掉
-            if (vid.length > 0) {
-                [taskList addObject:taskDict];
-                NSLog(@"[PolyvPlugin] Adding task to list: vid=%@, status=%@, downloadedBytes=%lld",
-                      vid, taskDict[@"status"], [taskDict[@"downloadedBytes"] longLongValue]);
-            } else {
-                NSLog(@"[PolyvPlugin] Filtering out task without vid");
-            }
-        }
-    }
-
-    NSLog(@"[PolyvPlugin] Returning %lu tasks (filtered from %lu total)", (unsigned long)taskList.count, (unsigned long)allDownloads.count);
-    result(taskList);
-}
-
-/// 将 PLVDownloadInfo 转换为 Flutter 可用的字典格式
-- (NSDictionary *)convertDownloadInfoToDict:(PLVDownloadInfo *)info {
-    if (!info) return nil;
-    
-    NSString *vid = info.vid ?: @"";
-    NSString *taskId = vid; // 使用 vid 作为任务 ID
-    NSString *title = info.title ?: @"未知视频";
-    NSString *thumbnail = info.snapshot ?: @"";
-    
-    // 文件大小信息
-    long long totalBytes = info.filesize;
-    // SDK 没有 downloadedBytes 属性，使用 progress * filesize 计算
-    long long downloadedBytes = (long long)(info.progress * info.filesize);
-    
-    // 下载速度（SDK 可能不直接提供，设为 0）
-    int bytesPerSecond = 0;
-    
-    // 状态转换
-    NSString *status = [self convertDownloadStateToString:info.state];
-    
-    // 错误信息
-    NSString *errorMessage = nil;
-    if (info.state == PLVVodDownloadStateFailed) {
-        errorMessage = @"下载失败";
-    }
-    
-    // 时间信息
-    NSString *createdAt = [[self iso8601Formatter] stringFromDate:[NSDate date]];
-    NSString *completedAt = nil;
-    if (info.state == PLVVodDownloadStateSuccess) {
-        completedAt = [[self iso8601Formatter] stringFromDate:[NSDate date]];
-    }
-    
-    NSMutableDictionary *dict = [@{
-        @"id": taskId,
-        @"vid": vid,
-        @"title": title,
-        @"totalBytes": @(totalBytes),
-        @"downloadedBytes": @(downloadedBytes),
-        @"bytesPerSecond": @(bytesPerSecond),
-        @"status": status,
-        @"createdAt": createdAt,
-    } mutableCopy];
-    
-    if (thumbnail.length > 0) {
-        dict[@"thumbnail"] = thumbnail;
-    }
-    if (errorMessage) {
-        dict[@"errorMessage"] = errorMessage;
-    }
-    if (completedAt) {
-        dict[@"completedAt"] = completedAt;
-    }
-    
-    return dict;
-}
-
-/// 将 SDK 下载状态转换为 Flutter 状态字符串
-- (NSString *)convertDownloadStateToString:(PLVVodDownloadState)state {
-    switch (state) {
-        case PLVVodDownloadStatePreparing:
-            return @"preparing";
-        case PLVVodDownloadStateReady:
-            return @"waiting";
-        case PLVVodDownloadStateRunning:
-            return @"downloading";
-        case PLVVodDownloadStateStopping:
-        case PLVVodDownloadStateStopped:
-            return @"paused";
-        case PLVVodDownloadStateSuccess:
-            return @"completed";
-        case PLVVodDownloadStateFailed:
-            return @"error";
-        default:
-            return @"waiting";
-    }
-}
-
-/// ISO8601 日期格式化器
-- (NSDateFormatter *)iso8601Formatter {
-    static NSDateFormatter *formatter = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        formatter = [[NSDateFormatter alloc] init];
-        formatter.dateFormat = @"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'";
-        formatter.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"UTC"];
-        formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
-    });
-    return formatter;
+    result([self.downloadMonitor fetchDownloadTaskList]);
 }
 
 /// Story 9.5/9.7: 删除下载任务
@@ -1286,11 +1025,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 - (void)clearPlayer {
     // 清理播放器资源，但不置nil（使用lazy getter模式）
     if (_player) {
-        if (self.playerSession) {
-            [self.playerSession clearPlayer];
-        } else {
-            [_player clearPlayer];
-        }
+        [self.playerSession clearPlayer];
         _player = nil;
     }
 
@@ -1327,61 +1062,23 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 
     self.currentQualityIndex = 0;
 
-    self.subtitleModule = nil;
-
-    if (self.subtitleCoordinator) {
-        [self.subtitleCoordinator resetAll];
-    }
-
-    [self.subtitleLabel removeFromSuperview];
-    [self.subtitleTopLabel removeFromSuperview];
-    [self.subtitleLabel2 removeFromSuperview];
-    [self.subtitleTopLabel2 removeFromSuperview];
-    self.subtitleLabel = nil;
-    self.subtitleTopLabel = nil;
-    self.subtitleLabel2 = nil;
-    self.subtitleTopLabel2 = nil;
-
-    self.currentSubtitleTrackKey = nil;
-    self.currentSubtitleEnabled = NO;
-    self.subtitleStateInitialized = NO;
+    [self.subtitleCoordinator resetAll];
+    self.lastOrientation = 0;
 
     self.videoViewController = nil;
 }
 
 - (void)sendStateChangeEvent:(NSString *)state {
     NSLog(@"[PolyvPlugin] sendStateChangeEvent: %@", state);
-    [self.eventEmitter sendPlayerEvent:@{
-        @"type": @"stateChanged",
-        @"data": @{ @"state": state }
-    }];
+    [self.playerSession sendStateChangeEvent:state];
 }
 
 - (void)sendProgressEvent {
-    if (!self.player) return;
-
-    NSInteger position = (NSInteger)(self.player.currentPlaybackTime * 1000);
-    NSInteger duration = (NSInteger)(self.player.duration * 1000);
-    NSInteger buffered = (NSInteger)(self.player.playableDuration * 1000);
-
-    [self.eventEmitter sendPlayerEvent:@{
-        @"type": @"progress",
-        @"data": @{
-            @"position": @(position),
-            @"duration": @(duration),
-            @"bufferedPosition": @(buffered)
-        }
-    }];
+    [self.playerSession sendProgressEvent];
 }
 
 - (void)sendErrorEventWithCode:(NSString *)code message:(NSString *)message {
-    [self.eventEmitter sendPlayerEvent:@{
-        @"type": @"error",
-        @"data": @{
-            @"code": code,
-            @"message": message
-        }
-    }];
+    [self.playerSession sendErrorEventWithCode:code message:message];
 }
 
 /// 发送字幕变化事件
@@ -1404,129 +1101,76 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 ///   }
 /// }
 - (void)sendSubtitleChangedEventWithEnabled:(BOOL)enabled trackKey:(NSString *)trackKey {
-    if (self.subtitleCoordinator) {
-        if (self.videoViewController && self.videoViewController.containerView) {
-            [self.subtitleCoordinator updateContainerView:self.videoViewController.containerView];
-        }
-        [self.subtitleCoordinator sendSubtitleChangedEventWithVideo:self.currentVideo enabled:enabled trackKey:trackKey];
-
-        self.currentSubtitleEnabled = enabled;
-        self.currentSubtitleTrackKey = trackKey;
-        self.subtitleStateInitialized = YES;
-        return;
+    if (self.videoViewController && self.videoViewController.containerView) {
+        [self.subtitleCoordinator updateContainerView:self.videoViewController.containerView];
     }
-    NSMutableArray *subtitlesArray = [NSMutableArray array];
-    NSInteger currentIndex = -1;
-
-    if (self.currentVideo) {
-        // 注意：移除了"双语"选项的自动添加逻辑，与 Android 保持一致
-        // 如果需要支持双语字幕，可以在这里恢复 match_srt 的处理
-
-        // 单字幕轨道来自 video.srts
-        @try {
-            NSArray *srts = [self.currentVideo valueForKey:@"srts"];
-            if ([srts isKindOfClass:[NSArray class]]) {
-                for (id item in srts) {
-                    NSString *title = nil;
-                    NSString *url = nil;
-                    @try {
-                        if ([item respondsToSelector:@selector(title)]) {
-                            title = [item valueForKey:@"title"];
-                        }
-                        if ([item respondsToSelector:@selector(url)]) {
-                            url = [item valueForKey:@"url"];
-                        }
-                    } @catch (__unused NSException *inner) {
-                        title = nil;
-                        url = nil;
-                    }
-
-                    if (title.length == 0) {
-                        title = @"";
-                    }
-
-                    NSMutableDictionary *subtitleDict = [@{
-                        @"trackKey": title,
-                        @"language": title,
-                        @"label": title,
-                        @"isBilingual": @NO,
-                        @"isDefault": @NO
-                    } mutableCopy];
-                    if (url.length > 0) {
-                        subtitleDict[@"url"] = url;
-                    }
-
-                    if (trackKey && [trackKey isEqualToString:title] && currentIndex == -1) {
-                        currentIndex = subtitlesArray.count;
-                    }
-
-                    [subtitlesArray addObject:subtitleDict];
-                }
-            }
-        } @catch (__unused NSException *exception) {
-            // 忽略 srts 相关异常
-        }
-    }
-
-    if (!enabled) {
-        currentIndex = -1;
-        trackKey = nil;
-    } else if (currentIndex < 0 && subtitlesArray.count > 0) {
-        // 启用字幕但未能匹配到有效轨道时（包括 trackKey 为空或无效），退回到列表第一项
-        currentIndex = 0;
-        NSDictionary *first = subtitlesArray.firstObject;
-        trackKey = [first[@"language"] isKindOfClass:[NSString class]] ? first[@"language"] : nil;
-    }
-
-    // 驱动原生字幕渲染
-    if (self.subtitleModule) {
-        NSString *subtitleName = trackKey;
-        if (!enabled || subtitleName.length == 0) {
-            subtitleName = @"";
-        }
-        [self.subtitleModule updateSubtitleWithName:subtitleName show:(enabled && subtitleName.length > 0)];
-    }
-
-    // 保存当前字幕配置，用于横竖屏切换后恢复
-    self.currentSubtitleEnabled = enabled;
-    self.currentSubtitleTrackKey = trackKey;
-    self.subtitleStateInitialized = YES;
-
-    NSMutableDictionary *data = [@{
-        @"subtitles": subtitlesArray,
-        @"currentIndex": @(currentIndex),
-        @"enabled": @(enabled)
-    } mutableCopy];
-    if (trackKey) {
-        data[@"trackKey"] = trackKey;
-    }
-
-    [self.eventEmitter sendPlayerEvent:@{
-        @"type": @"subtitleChanged",
-        @"data": data
-    }];
+    [self.subtitleCoordinator sendSubtitleChangedEventWithVideo:self.currentVideo enabled:enabled trackKey:trackKey];
 }
 
 - (void)PLVVodMediaPlayer:(PLVVodMediaPlayer *)vodMediaPlayer playedProgress:(CGFloat)playedProgress playedTimeString:(NSString *)playedTimeString durationTimeString:(NSString *)durationTimeString {
     [self sendProgressEvent];
 
-    // 确保字幕Label始终在最上层（播放器视图可能重新创建导致字幕被覆盖）
-    // 每秒只打印一次日志，避免日志过多
     static NSTimeInterval lastLogTime = 0;
     NSTimeInterval currentTime = vodMediaPlayer.currentPlaybackTime;
     if (currentTime - lastLogTime >= 1.0) {
-        NSLog(@"[PolyvPlugin] playedProgress: %.2f, subtitleModule: %@", playedProgress, self.subtitleModule ? @"YES" : @"NO");
+        NSLog(@"[PolyvPlugin] playedProgress: %.2f", playedProgress);
         lastLogTime = currentTime;
     }
 
     [self bringSubtitleLabelsToFront];
+    [self.subtitleCoordinator showSubtitlesWithPlaytime:vodMediaPlayer.currentPlaybackTime];
+}
 
-    if (self.subtitleCoordinator) {
-        [self.subtitleCoordinator showSubtitlesWithPlaytime:vodMediaPlayer.currentPlaybackTime];
+- (void)PLVVodMediaPlayer:(PLVVodMediaPlayer *)vodMediaPlayer loadMainPlayerFailureWithError:(NSError * _Nullable)error {
+    NSString *message = error ? (error.localizedDescription ?: @"Unknown error") : @"Unknown error";
+    [self sendErrorEventWithCode:kErrorCodeNetworkError message:message];
+    [self sendStateChangeEvent:kStateError];
+}
+
+- (void)plvMediaPlayerCore:(PLVMediaPlayerCore *)player playerIsPreparedToPlay:(BOOL)prepared {
+    if (prepared) {
+        [self sendStateChangeEvent:kStatePrepared];
+    }
+}
+
+- (void)plvMediaPlayerCore:(PLVMediaPlayerCore *)player playerLoadStateDidChange:(PLVPlayerLoadState)loadState {
+    if (loadState & PLVPlayerLoadStateStalled) {
+        [self sendStateChangeEvent:kStateBuffering];
         return;
     }
-    if (self.subtitleModule) {
-        [self.subtitleModule showSubtilesWithPlaytime:vodMediaPlayer.currentPlaybackTime];
+
+    PLVPlaybackState playbackState = player.playbackState;
+    if (playbackState == PLVPlaybackStatePlaying) {
+        [self sendStateChangeEvent:kStatePlaying];
+    } else if (playbackState == PLVPlaybackStatePaused) {
+        [self sendStateChangeEvent:kStatePaused];
+    }
+}
+
+- (void)plvMediaPlayerCore:(PLVMediaPlayerCore *)player playerPlaybackStateDidChange:(PLVPlaybackState)playbackState {
+    switch (playbackState) {
+        case PLVPlaybackStatePlaying:
+            [self sendStateChangeEvent:kStatePlaying];
+            break;
+        case PLVPlaybackStatePaused:
+            [self sendStateChangeEvent:kStatePaused];
+            break;
+        case PLVPlaybackStateStopped:
+            [self sendStateChangeEvent:kStateIdle];
+            break;
+        default:
+            break;
+    }
+}
+
+- (void)plvMediaPlayerCore:(PLVMediaPlayerCore *)player playerPlaybackDidFinish:(PLVPlayerFinishReason)finishReson {
+    if (finishReson == PLVPlayerFinishReasonPlaybackEnded) {
+        [self sendStateChangeEvent:kStateCompleted];
+        [self.playerSession sendCompletedEvent];
+    } else if (finishReson == PLVPlayerFinishReasonPlaybackError) {
+        [self sendStateChangeEvent:kStateError];
+    } else {
+        [self sendStateChangeEvent:kStateIdle];
     }
 }
 
@@ -1581,229 +1225,26 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 }
 
 - (void)setupSubtitleModuleIfNeededForVideo:(PLVVodMediaVideo *)video {
-    if (self.subtitleCoordinator) {
-        if (self.videoViewController && self.videoViewController.containerView) {
-            [self.subtitleCoordinator updateContainerView:self.videoViewController.containerView];
-        }
-        [self.subtitleCoordinator setupIfNeededForVideo:video];
-        return;
-    }
     if (!self.videoViewController || !self.videoViewController.containerView) {
         return;
     }
 
-    // 初始化设备方向记录（用于后续检测横竖屏切换）
     if (self.lastOrientation == 0) {
         self.lastOrientation = [UIDevice currentDevice].orientation;
         NSLog(@"[PolyvPlugin] Initial orientation: %ld", (long)self.lastOrientation);
     }
-
-    UIView *container = self.videoViewController.containerView;
-    NSLog(@"[PolyvPlugin] ========== setupSubtitleModuleIfNeededForVideo called ==========");
-    NSLog(@"[PolyvPlugin] container.bounds: %@", NSStringFromCGRect(container.bounds));
-    NSLog(@"[PolyvPlugin] subtitleLabel exists: %@", self.subtitleLabel ? @"YES" : @"NO");
-
-    if (!self.subtitleLabel) {
-        CGRect bounds = container.bounds;
-        CGFloat width = bounds.size.width > 0 ? bounds.size.width : [UIScreen mainScreen].bounds.size.width;
-        CGFloat height = bounds.size.height > 0 ? bounds.size.height : [UIScreen mainScreen].bounds.size.height;
-
-        UILabel *bottomLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, height - 80.0, width - 32.0, 40.0)];
-        bottomLabel.textColor = [UIColor whiteColor];
-        bottomLabel.textAlignment = NSTextAlignmentCenter;
-        bottomLabel.numberOfLines = 0;
-        bottomLabel.shadowColor = [UIColor colorWithWhite:0 alpha:0.8];
-        bottomLabel.shadowOffset = CGSizeMake(0, 1);
-        bottomLabel.backgroundColor = [UIColor clearColor];
-        bottomLabel.adjustsFontSizeToFitWidth = YES;
-        bottomLabel.minimumScaleFactor = 0.5;
-
-        UILabel *topLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, height - 120.0, width - 32.0, 40.0)];
-        topLabel.textColor = [UIColor whiteColor];
-        topLabel.textAlignment = NSTextAlignmentCenter;
-        topLabel.numberOfLines = 0;
-        topLabel.shadowColor = [UIColor colorWithWhite:0 alpha:0.8];
-        topLabel.shadowOffset = CGSizeMake(0, 1);
-        topLabel.backgroundColor = [UIColor clearColor];
-        topLabel.adjustsFontSizeToFitWidth = YES;
-        topLabel.minimumScaleFactor = 0.5;
-
-        UILabel *bottomLabel2 = [[UILabel alloc] initWithFrame:CGRectMake(16, height - 40.0, width - 32.0, 30.0)];
-        bottomLabel2.textColor = [UIColor whiteColor];
-        bottomLabel2.textAlignment = NSTextAlignmentCenter;
-        bottomLabel2.numberOfLines = 0;
-        bottomLabel2.shadowColor = [UIColor colorWithWhite:0 alpha:0.8];
-        bottomLabel2.shadowOffset = CGSizeMake(0, 1);
-        bottomLabel2.backgroundColor = [UIColor clearColor];
-        bottomLabel2.adjustsFontSizeToFitWidth = YES;
-        bottomLabel2.minimumScaleFactor = 0.5;
-
-        UILabel *topLabel2 = [[UILabel alloc] initWithFrame:CGRectMake(16, height - 160.0, width - 32.0, 30.0)];
-        topLabel2.textColor = [UIColor whiteColor];
-        topLabel2.textAlignment = NSTextAlignmentCenter;
-        topLabel2.numberOfLines = 0;
-        topLabel2.shadowColor = [UIColor colorWithWhite:0 alpha:0.8];
-        topLabel2.shadowOffset = CGSizeMake(0, 1);
-        topLabel2.backgroundColor = [UIColor clearColor];
-        topLabel2.adjustsFontSizeToFitWidth = YES;
-        topLabel2.minimumScaleFactor = 0.5;
-
-        bottomLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
-        topLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
-        bottomLabel2.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
-        topLabel2.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
-
-        [container addSubview:topLabel2];
-        [container addSubview:bottomLabel2];
-        [container addSubview:topLabel];
-        [container addSubview:bottomLabel];
-
-        self.subtitleLabel = bottomLabel;
-        self.subtitleTopLabel = topLabel;
-        self.subtitleLabel2 = bottomLabel2;
-        self.subtitleTopLabel2 = topLabel2;
-
-        NSLog(@"[PolyvPlugin] Subtitle labels created and added to container");
-        NSLog(@"[PolyvPlugin] bottomLabel frame: %@", NSStringFromCGRect(bottomLabel.frame));
-    } else {
-        // 确保字幕 Label 始终在最上层（播放器视图可能覆盖了字幕）
-        NSLog(@"[PolyvPlugin] Subtitle labels already exist, bringing to front");
-        [container bringSubviewToFront:self.subtitleTopLabel2];
-        [container bringSubviewToFront:self.subtitleLabel2];
-        [container bringSubviewToFront:self.subtitleTopLabel];
-        [container bringSubviewToFront:self.subtitleLabel];
-    }
-
-    if (!self.subtitleModule) {
-        self.subtitleModule = [[PLVMediaPlayerSubtitleModule alloc] init];
-        NSLog(@"[PolyvPlugin] SubtitleModule created");
-    }
-
-    // 加载字幕模块（会加载默认字幕）
-    NSLog(@"[PolyvPlugin] Loading subtitle module with video...");
-    [self.subtitleModule loadSubtitlsWithVideoModel:video
-                                              label:self.subtitleLabel
-                                           topLabel:self.subtitleTopLabel
-                                             label2:self.subtitleLabel2
-                                          topLabel2:self.subtitleTopLabel2];
-    NSLog(@"[PolyvPlugin] Subtitle module loaded");
-
-    // 延迟确保字幕Label在最上层（播放器视图可能在字幕之后才被创建）
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        NSLog(@"[PolyvPlugin] Delayed bringSubtitleLabelsToFront called");
-        [self bringSubtitleLabelsToFront];
-    });
-
-    // 如果用户之前有字幕选择，恢复用户选择
-    if (self.subtitleStateInitialized && self.currentSubtitleEnabled) {
-        NSString *subtitleName = self.currentSubtitleTrackKey;
-        if (subtitleName.length == 0 && video) {
-            // 如果字幕为空但启用了字幕，使用第一个字幕
-            @try {
-                NSArray *srts = [video valueForKey:@"srts"];
-                if ([srts isKindOfClass:[NSArray class]] && srts.count > 0) {
-                    id firstSrt = srts.firstObject;
-                    if ([firstSrt respondsToSelector:@selector(title)]) {
-                        subtitleName = [firstSrt valueForKey:@"title"];
-                    }
-                }
-            } @catch (__unused NSException *exception) {
-            }
-        }
-
-        if (subtitleName.length > 0) {
-            NSLog(@"[PolyvPlugin] 恢复字幕选择: %@", subtitleName);
-            [self.subtitleModule updateSubtitleWithName:subtitleName show:YES];
-        }
-    }
+    [self.subtitleCoordinator updateContainerView:self.videoViewController.containerView];
+    [self.subtitleCoordinator setupIfNeededForVideo:video];
 }
 
 /// 确保字幕Label始终在最上层（播放器视图可能覆盖了字幕）
 - (void)bringSubtitleLabelsToFront {
-    if (self.subtitleCoordinator) {
-        [self.subtitleCoordinator bringSubtitleLabelsToFront];
-        return;
-    }
-    if (!self.videoViewController || !self.videoViewController.containerView) {
-        return;
-    }
-
-    UIView *container = self.videoViewController.containerView;
-
-    // 打印视图层级用于调试
-    NSLog(@"[PolyvPlugin] ========== bringSubtitleLabelsToFront ==========");
-    NSLog(@"[PolyvPlugin] container.bounds: %@, container.frame: %@", NSStringFromCGRect(container.bounds), NSStringFromCGRect(container.frame));
-    NSLog(@"[PolyvPlugin] containerView subviews count: %lu", (unsigned long)container.subviews.count);
-
-    // 更新字幕Label的frame以适应containerView的当前大小
-    [self updateSubtitleLabelFrames];
-
-    // 打印字幕Label的frame
-    NSLog(@"[PolyvPlugin] subtitleLabel.frame: %@", NSStringFromCGRect(self.subtitleLabel.frame));
-    NSLog(@"[PolyvPlugin] subtitleTopLabel.frame: %@", NSStringFromCGRect(self.subtitleTopLabel.frame));
-    NSLog(@"[PolyvPlugin] subtitleLabel.text: '%@'", self.subtitleLabel.text);
-
-    for (int i = 0; i < container.subviews.count; i++) {
-        UIView *subview = container.subviews[i];
-        NSLog(@"[PolyvPlugin]   [%d] %@ (frame=%@, hidden=%d)", i,
-              NSStringFromClass(subview.class),
-              NSStringFromCGRect(subview.frame),
-              subview.isHidden);
-    }
-
-    // 确保所有字幕Label都在最上层
-    if (self.subtitleTopLabel2 && self.subtitleTopLabel2.superview == container) {
-        [container bringSubviewToFront:self.subtitleTopLabel2];
-        NSLog(@"[PolyvPlugin] Brought subtitleTopLabel2 to front");
-    }
-    if (self.subtitleLabel2 && self.subtitleLabel2.superview == container) {
-        [container bringSubviewToFront:self.subtitleLabel2];
-        NSLog(@"[PolyvPlugin] Brought subtitleLabel2 to front");
-    }
-    if (self.subtitleTopLabel && self.subtitleTopLabel.superview == container) {
-        [container bringSubviewToFront:self.subtitleTopLabel];
-        NSLog(@"[PolyvPlugin] Brought subtitleTopLabel to front");
-    }
-    if (self.subtitleLabel && self.subtitleLabel.superview == container) {
-        [container bringSubviewToFront:self.subtitleLabel];
-        NSLog(@"[PolyvPlugin] Brought subtitleLabel to front");
-    }
+    [self.subtitleCoordinator bringSubtitleLabelsToFront];
 }
 
 /// 更新字幕Label的frame以适应containerView的当前大小
 - (void)updateSubtitleLabelFrames {
-    if (self.subtitleCoordinator) {
-        [self.subtitleCoordinator updateSubtitleLabelFrames];
-        return;
-    }
-    if (!self.videoViewController || !self.videoViewController.containerView) {
-        return;
-    }
-
-    UIView *container = self.videoViewController.containerView;
-    CGRect bounds = container.bounds;
-
-    // 如果container的size无效，使用当前字幕Label的frame或屏幕尺寸
-    if (bounds.size.width <= 0 || bounds.size.height <= 0) {
-        bounds = [UIScreen mainScreen].bounds;
-    }
-
-    CGFloat width = bounds.size.width;
-    CGFloat height = bounds.size.height;
-
-    // 更新所有字幕Label的frame
-    if (self.subtitleLabel) {
-        self.subtitleLabel.frame = CGRectMake(16, height - 80.0, width - 32.0, 40.0);
-    }
-    if (self.subtitleTopLabel) {
-        self.subtitleTopLabel.frame = CGRectMake(16, height - 120.0, width - 32.0, 40.0);
-    }
-    if (self.subtitleLabel2) {
-        self.subtitleLabel2.frame = CGRectMake(16, height - 40.0, width - 32.0, 30.0);
-    }
-    if (self.subtitleTopLabel2) {
-        self.subtitleTopLabel2.frame = CGRectMake(16, height - 160.0, width - 32.0, 30.0);
-    }
+    [self.subtitleCoordinator updateSubtitleLabelFrames];
 }
 
 #pragma mark - Story 9.8: Download Status Monitoring
@@ -1815,215 +1256,13 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     }
 
     [self.downloadMonitor startMonitoring];
-    return;
-    self.downloadPreviousStates = [NSMutableDictionary dictionary];
-
-    // 记录初始状态（SDK 没有提供统一的 requestDownloadInfoList 方法）
-    NSArray<PLVDownloadInfo *> *unfinishedDownloads = [[PLVDownloadMediaManager sharedManager] getUnfinishedDownloadList];
-    NSArray<PLVDownloadInfo *> *finishedDownloads = [[PLVDownloadMediaManager sharedManager] getFinishedDownloadList];
-
-    // 合并两个数组
-    NSMutableArray<PLVDownloadInfo *> *allDownloads = [NSMutableArray arrayWithArray:unfinishedDownloads];
-    [allDownloads addObjectsFromArray:finishedDownloads];
-
-    NSLog(@"[PolyvPlugin] Total tasks from SDK: %lu (unfinished: %lu, finished: %lu)",
-          (unsigned long)allDownloads.count, (unsigned long)unfinishedDownloads.count, (unsigned long)finishedDownloads.count);
-
-    // 用于检测重复 vid 的集合
-    NSMutableSet<NSString *> *seenVids = [NSMutableSet set];
-
-    for (PLVDownloadInfo *info in allDownloads) {
-        NSString *vid = info.vid ?: @"";
-        if (vid.length == 0) continue;
-
-        [self.downloadPreviousStates setObject:@(info.state) forKey:vid];
-
-        // 检测重复 vid
-        if ([seenVids containsObject:vid]) {
-            NSLog(@"[PolyvPlugin] WARNING: Duplicate vid found in download list: vid=%@", vid);
-        } else {
-            [seenVids addObject:vid];
-        }
-    }
-
-    // 启动定时器，每秒检查一次下载状态变化
-    self.downloadStatusCheckTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
-                                                                     target:self
-                                                                   selector:@selector(checkDownloadStatusChanges)
-                                                                   userInfo:nil
-                                                                    repeats:YES];
-
-    NSLog(@"[PolyvPlugin] Download status monitoring started with %lu tasks", (unsigned long)allDownloads.count);
 }
 
 /// 停止下载状态监控
 - (void)stopDownloadStatusMonitoring {
     if (self.downloadMonitor) {
         [self.downloadMonitor stopMonitoring];
-        return;
     }
-    if (self.downloadStatusCheckTimer) {
-        [self.downloadStatusCheckTimer invalidate];
-        self.downloadStatusCheckTimer = nil;
-        NSLog(@"[PolyvPlugin] Download status monitoring stopped");
-    }
-}
-
-/// 检查下载状态变化并推送事件
-- (void)checkDownloadStatusChanges {
-    // 获取所有下载任务（SDK 没有提供统一的 requestDownloadInfoList 方法）
-    NSArray<PLVDownloadInfo *> *unfinishedDownloads = [[PLVDownloadMediaManager sharedManager] getUnfinishedDownloadList];
-    NSArray<PLVDownloadInfo *> *finishedDownloads = [[PLVDownloadMediaManager sharedManager] getFinishedDownloadList];
-
-    // 合并两个数组
-    NSMutableArray<PLVDownloadInfo *> *allDownloads = [NSMutableArray arrayWithArray:unfinishedDownloads];
-    [allDownloads addObjectsFromArray:finishedDownloads];
-
-    for (PLVDownloadInfo *info in allDownloads) {
-        NSString *vid = info.vid ?: @"";
-        if (vid.length == 0) continue;
-
-        PLVVodDownloadState currentState = info.state;
-        NSNumber *previousStateNumber = self.downloadPreviousStates[vid];
-        PLVVodDownloadState previousState = previousStateNumber ? (PLVVodDownloadState)[previousStateNumber integerValue] : PLVVodDownloadStatePreparing;
-
-        // 检测状态变化
-        if (currentState != previousState) {
-            NSLog(@"[PolyvPlugin] Download state changed for vid=%@: %ld -> %ld",
-                  vid, (long)previousState, (long)currentState);
-
-            [self handleDownloadStateChanged:info fromState:previousState toState:currentState];
-
-            // 更新记录的状态
-            self.downloadPreviousStates[vid] = @(currentState);
-        }
-
-        // 对于所有活跃下载状态的任务，定期发送进度更新
-        // 包括：准备中、就绪、运行中等状态，确保 Flutter 层能实时看到进度变化
-        if (currentState == PLVVodDownloadStateRunning ||
-            currentState == PLVVodDownloadStatePreparing ||
-            currentState == PLVVodDownloadStatePreparingTask ||
-            currentState == PLVVodDownloadStateReady) {
-            [self sendDownloadProgressEvent:info];
-        }
-    }
-}
-
-/// 处理下载状态变化
-- (void)handleDownloadStateChanged:(PLVDownloadInfo *)info
-                        fromState:(PLVVodDownloadState)fromState
-                          toState:(PLVVodDownloadState)toState {
-    NSString *vid = info.vid ?: @"";
-
-    // 根据新状态发送对应事件
-    switch (toState) {
-        case PLVVodDownloadStateSuccess:
-            [self sendDownloadCompletedEvent:info];
-            break;
-
-        case PLVVodDownloadStateFailed:
-            [self sendDownloadFailedEvent:info];
-            break;
-
-        case PLVVodDownloadStateStopping:
-        case PLVVodDownloadStateStopped:
-            [self sendDownloadPausedEvent:info];
-            break;
-
-        case PLVVodDownloadStateRunning:
-            // 如果之前是暂停状态，现在恢复下载
-            if (fromState == PLVVodDownloadStateStopped || fromState == PLVVodDownloadStateStopping) {
-                [self sendDownloadResumedEvent:info];
-            }
-            break;
-
-        default:
-            break;
-    }
-}
-
-/// 发送下载进度事件
-- (void)sendDownloadProgressEvent:(PLVDownloadInfo *)info {
-    NSString *vid = info.vid ?: @"";
-    if (vid.length == 0) return;
-
-    // SDK 没有 downloadedBytes 属性，使用 progress * filesize 计算
-    long long downloadedBytes = (long long)(info.progress * info.filesize);
-
-    [self.eventEmitter sendDownloadEvent:@{
-        @"type": kDownloadEventTaskProgress,
-        @"data": @{
-            @"id": vid,
-            @"downloadedBytes": @(downloadedBytes),
-            @"totalBytes": @(info.filesize),
-            @"bytesPerSecond": @(0), // iOS SDK 不直接提供速度信息
-            @"status": [self convertDownloadStateToString:info.state]
-        }
-    }];
-}
-
-/// 发送下载完成事件
-- (void)sendDownloadCompletedEvent:(PLVDownloadInfo *)info {
-    NSString *vid = info.vid ?: @"";
-    if (vid.length == 0) return;
-
-    NSString *completedAt = [[self iso8601Formatter] stringFromDate:[NSDate date]];
-
-    [self.eventEmitter sendDownloadEvent:@{
-        @"type": kDownloadEventTaskCompleted,
-        @"data": @{
-            @"id": vid,
-            @"completedAt": completedAt
-        }
-    }];
-}
-
-/// 发送下载失败事件
-- (void)sendDownloadFailedEvent:(PLVDownloadInfo *)info {
-    NSString *vid = info.vid ?: @"";
-    if (vid.length == 0) return;
-
-    [self.eventEmitter sendDownloadEvent:@{
-        @"type": kDownloadEventTaskFailed,
-        @"data": @{
-            @"id": vid,
-            @"errorMessage": @"下载失败"
-        }
-    }];
-}
-
-/// 发送下载暂停事件
-- (void)sendDownloadPausedEvent:(PLVDownloadInfo *)info {
-    NSString *vid = info.vid ?: @"";
-    if (vid.length == 0) return;
-
-    [self.eventEmitter sendDownloadEvent:@{
-        @"type": kDownloadEventTaskPaused,
-        @"data": @{
-            @"id": vid
-        }
-    }];
-}
-
-/// 发送下载恢复事件
-- (void)sendDownloadResumedEvent:(PLVDownloadInfo *)info {
-    NSString *vid = info.vid ?: @"";
-    if (vid.length == 0) return;
-
-    // SDK 没有 downloadedBytes 属性，使用 progress * filesize 计算
-    long long downloadedBytes = (long long)(info.progress * info.filesize);
-
-    [self.eventEmitter sendDownloadEvent:@{
-        @"type": kDownloadEventTaskProgress,  // 使用 taskProgress 而不是 taskResumed，包含进度信息
-        @"data": @{
-            @"id": vid,
-            @"downloadedBytes": @(downloadedBytes),
-            @"totalBytes": @(info.filesize),
-            @"bytesPerSecond": @(0), // iOS SDK 不直接提供速度信息
-            @"status": @"downloading"
-        }
-    }];
-    NSLog(@"[PolyvPlugin] Send resumed event for vid=%@ with downloadedBytes=%lld", vid, downloadedBytes);
 }
 
 @end

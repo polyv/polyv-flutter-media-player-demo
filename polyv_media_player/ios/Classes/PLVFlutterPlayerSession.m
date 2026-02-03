@@ -2,7 +2,11 @@
 
 #import "PLVFlutterEventEmitter.h"
 
+#if __has_feature(modules)
+@import PolyvMediaPlayerSDK;
+#else
 #import <PolyvMediaPlayerSDK/PolyvMediaPlayerSDK.h>
+#endif
 
 @class UIView;
 
@@ -132,7 +136,66 @@
 }
 
 - (NSInteger)lastSelectedQualityIndex {
-    return [[NSUserDefaults standardUserDefaults] integerForKey:@"PLVLastSelectedQuality"]; 
+    return [[NSUserDefaults standardUserDefaults] integerForKey:@"PLVLastSelectedQuality"];
+}
+
+- (BOOL)sendProgressEvent {
+    if (!self.player || !self.eventEmitter) {
+        return NO;
+    }
+
+    NSInteger position = (NSInteger)(self.player.currentPlaybackTime * 1000);
+    NSInteger duration = (NSInteger)(self.player.duration * 1000);
+    NSInteger buffered = (NSInteger)(self.player.playableDuration * 1000);
+
+    [self.eventEmitter sendPlayerEvent:@{
+        @"type": @"progress",
+        @"data": @{
+            @"position": @(position),
+            @"duration": @(duration),
+            @"bufferedPosition": @(buffered)
+        }
+    }];
+    return YES;
+}
+
+- (BOOL)sendStateChangeEvent:(NSString *)state {
+    if (!self.eventEmitter || state.length == 0) {
+        return NO;
+    }
+
+    [self.eventEmitter sendPlayerEvent:@{
+        @"type": @"stateChanged",
+        @"data": @{ @"state": state }
+    }];
+    return YES;
+}
+
+- (BOOL)sendErrorEventWithCode:(NSString *)code message:(NSString *)message {
+    if (!self.eventEmitter || code.length == 0) {
+        return NO;
+    }
+    NSString *safeMessage = message ?: @"";
+
+    [self.eventEmitter sendPlayerEvent:@{
+        @"type": @"error",
+        @"data": @{
+            @"code": code,
+            @"message": safeMessage
+        }
+    }];
+    return YES;
+}
+
+- (BOOL)sendCompletedEvent {
+    if (!self.eventEmitter) {
+        return NO;
+    }
+    [self.eventEmitter sendPlayerEvent:@{
+        @"type": @"completed",
+        @"data": @{}
+    }];
+    return YES;
 }
 
 - (BOOL)playWithCoreDelegate:(id)coreDelegate vodDelegate:(id)vodDelegate {

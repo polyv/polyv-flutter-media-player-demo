@@ -358,6 +358,21 @@ lib/
 
 ### Communication Patterns
 
+#### Native vs Dart Responsibility Boundaries
+
+- **Quality switching responsibility (CRITICAL)**
+  - 清晰度切换后的“进度与播放状态恢复”（seek/play 恢复）属于**原生播放器能力**的一部分，只能在原生层实现。
+  - Dart 层只负责触发 `setQuality(index)` 并消费 `qualityChanged` 事件更新状态，**不得**再实现一套重复的“切清晰度后 seek/play 恢复”逻辑。
+
+#### iOS Plugin Internal Modularization (Implementation Detail)
+
+- 为降低 iOS 插件单文件复杂度、提升可维护性，iOS 侧将 `PolyvMediaPlayerPlugin.m` 的部分职责拆分为多个 Objective-C 组件（不改变对外 Channel API）：
+  - `PLVFlutterMethodRouter`（方法路由）
+  - `PLVFlutterEventEmitter`（事件发送封装）
+  - `PLVFlutterDownloadMonitor`（下载状态监控与 download_events）
+  - `PLVFlutterSubtitleCoordinator`（字幕协调）
+  - `PLVFlutterPlayerSession`（播放器生命周期/回调桥接与事件发送）
+
 **Provider 状态管理模式：**
 
 ```dart

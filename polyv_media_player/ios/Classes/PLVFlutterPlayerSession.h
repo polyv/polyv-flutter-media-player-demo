@@ -41,6 +41,11 @@
               errorCode:(NSString * _Nullable * _Nullable)errorCode
           errorMessage:(NSString * _Nullable * _Nullable)errorMessage;
 
+- (BOOL)sendProgressEvent;
+- (BOOL)sendStateChangeEvent:(NSString *)state;
+- (BOOL)sendErrorEventWithCode:(NSString *)code message:(NSString *)message;
+- (BOOL)sendCompletedEvent;
+
 - (void)clearPlayer;
 
 @end

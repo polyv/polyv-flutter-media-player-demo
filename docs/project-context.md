@@ -283,6 +283,19 @@ await _channel.invokeMethod('play');  // ❌ 没有错误处理
     - 消费 `qualityChanged` 事件并更新本地状态。
 - 禁止在 Dart 层再次实现“清晰度切换后恢复进度/播放状态”的逻辑，以避免与原生实现产生冲突或双重 seek/play。
 
+**iOS 原生插件职责拆分现状（iOS PLUGIN MODULE SPLIT）：**
+
+- iOS 插件已将 `PolyvMediaPlayerPlugin.m` 中的部分职责拆分为多个组件，以降低单文件复杂度并便于回滚：
+  - `PLVFlutterMethodRouter`：MethodChannel 路由分发（插件方法入口保持不变，但路由逻辑下沉）。
+  - `PLVFlutterEventEmitter`：统一封装 player/download 两条 EventChannel 的事件发送。
+  - `PLVFlutterDownloadMonitor`：下载状态轮询与下载事件（download_events）发送（替代 Plugin 内 legacy timer 逻辑）。
+  - `PLVFlutterSubtitleCoordinator`：字幕轨道事件、字幕 label 维护、横竖屏更新等 UI 协调逻辑。
+  - `PLVFlutterPlayerSession`：播放器实例生命周期管理、SDK 调用薄封装、以及播放事件（state/progress/error/completed）发送。
+- **约束：**
+  - Plugin 仍是唯一持有 Flutter `registrar/channel` 的入口。
+  - 组件内部不持有 UI Widget（Flutter 侧 UI 不下沉到原生）。
+  - 组件之间只通过最小接口协作（例如通过 `PLVFlutterEventEmitter` 发送事件），避免形成新的“巨型上帝对象”。
+
 **Danmaku 业务服务使用规则（DANMAKU BUSINESS SERVICES）：**
 
 - 插件已经在 `lib/infrastructure/danmaku/` 下提供了统一的：
