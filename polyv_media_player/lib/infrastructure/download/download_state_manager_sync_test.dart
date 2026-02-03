@@ -11,7 +11,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late MethodChannel channel;
-  late EventChannel eventChannel;
+  late MethodChannel eventMethodChannel;
   late DownloadStateManager manager;
   List<Map<String, dynamic>> mockDownloadList = [];
 
@@ -20,7 +20,9 @@ void main() {
 
   setUp(() {
     channel = const MethodChannel(PlayerApi.methodChannelName);
-    eventChannel = const EventChannel(PlayerApi.downloadEventChannelName);
+    eventMethodChannel = const MethodChannel(
+      PlayerApi.downloadEventChannelName,
+    );
 
     // Mock MethodChannel
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -35,7 +37,9 @@ void main() {
     mockEventStreamController =
         StreamController<Map<String, dynamic>>.broadcast();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(eventChannel, (MethodCall methodCall) async {
+        .setMockMethodCallHandler(eventMethodChannel, (
+          MethodCall methodCall,
+        ) async {
           // EventChannel 不处理方法调用，通过 setMockMethodCallHandler 设置 mock
           return null;
         });
@@ -53,7 +57,7 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(eventChannel, null);
+        .setMockMethodCallHandler(eventMethodChannel, null);
     manager.dispose();
   });
 

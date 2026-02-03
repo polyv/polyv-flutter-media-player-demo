@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'dart:ui';
 
 import '../polyv_api_client.dart';
 import 'danmaku_model.dart';

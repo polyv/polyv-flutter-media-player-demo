@@ -240,6 +240,7 @@ class DownloadingTabView extends StatelessWidget {
                 try {
                   await context.read<DownloadStateManager>().deleteTask(taskId);
                 } catch (e) {
+                  if (!context.mounted) return;
                   _showSnackBarError(context, e);
                 }
               },
@@ -278,6 +279,7 @@ class DownloadingTabView extends StatelessWidget {
                     await stateManager.pauseTask(task.id);
                   }
                 } catch (e) {
+                  if (!context.mounted) return;
                   _showSnackBarError(context, e);
                 }
               },
@@ -285,6 +287,7 @@ class DownloadingTabView extends StatelessWidget {
                 try {
                   await stateManager.deleteTask(task.id);
                 } catch (e) {
+                  if (!context.mounted) return;
                   await _showDeleteFailedDialog(context, taskId: task.id);
                 }
               },
@@ -292,6 +295,7 @@ class DownloadingTabView extends StatelessWidget {
                 try {
                   await stateManager.retryTask(task.id);
                 } catch (e) {
+                  if (!context.mounted) return;
                   _showSnackBarError(context, e);
                 }
               },
@@ -455,133 +459,136 @@ class _CompletedTaskItem extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(16),
         child: Row(
-        children: [
-          Container(
-            width: 96,
-            height: 56,
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E293B),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                _buildThumbnail(),
-                Positioned(
-                  bottom: 4,
-                  right: 4,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.8),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      task.totalSizeFormatted,
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: Colors.white,
-                        fontWeight: FontWeight.w500,
+          children: [
+            Container(
+              width: 96,
+              height: 56,
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _buildThumbnail(),
+                  Positioned(
+                    bottom: 4,
+                    right: 4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.8),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        task.totalSizeFormatted,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  task.title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.white,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    task.title,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.white,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.check_circle_rounded,
-                      size: 14,
-                      color: Colors.white.withValues(alpha: 0.6),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '下载完成',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.7),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.check_circle_rounded,
+                        size: 14,
+                        color: Colors.white.withValues(alpha: 0.6),
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                      const SizedBox(width: 4),
+                      Text(
+                        '下载完成',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Consumer<DownloadStateManager>(
-            builder: (context, stateManager, _) {
-              return IconButton(
-                icon: const Icon(Icons.delete_outline_rounded),
-                color: const Color(0xFF64748B),
-                onPressed: () async {
-                  try {
-                    await stateManager.deleteTask(task.id);
-                  } catch (_) {
-                    if (!context.mounted) return;
-                    await showDialog<void>(
-                      context: context,
-                      builder: (dialogContext) {
-                        return AlertDialog(
-                          title: const Text('删除失败'),
-                          content: const Text('删除任务失败，请重试'),
-                          actions: [
-                            TextButton(
-                              onPressed: () =>
-                                  Navigator.of(dialogContext).pop(),
-                              child: const Text('取消'),
-                            ),
-                            TextButton(
-                              onPressed: () async {
-                                Navigator.of(dialogContext).pop();
-                                try {
-                                  await context
-                                      .read<DownloadStateManager>()
-                                      .deleteTask(task.id);
-                                } catch (e) {
-                                  if (!context.mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text(e.toString())),
-                                  );
-                                }
-                              },
-                              child: const Text('重试'),
-                            ),
-                          ],
-                        );
-                      },
-                    );
-                  }
-                },
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-              );
-            },
-          ),
-        ],
-      ),
+            const SizedBox(width: 8),
+            Consumer<DownloadStateManager>(
+              builder: (context, stateManager, _) {
+                return IconButton(
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  color: const Color(0xFF64748B),
+                  onPressed: () async {
+                    try {
+                      await stateManager.deleteTask(task.id);
+                    } catch (_) {
+                      if (!context.mounted) return;
+                      await showDialog<void>(
+                        context: context,
+                        builder: (dialogContext) {
+                          return AlertDialog(
+                            title: const Text('删除失败'),
+                            content: const Text('删除任务失败，请重试'),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.of(dialogContext).pop(),
+                                child: const Text('取消'),
+                              ),
+                              TextButton(
+                                onPressed: () async {
+                                  Navigator.of(dialogContext).pop();
+                                  try {
+                                    await context
+                                        .read<DownloadStateManager>()
+                                        .deleteTask(task.id);
+                                  } catch (e) {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text(e.toString())),
+                                    );
+                                  }
+                                },
+                                child: const Text('重试'),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    }
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 40,
+                    minHeight: 40,
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
