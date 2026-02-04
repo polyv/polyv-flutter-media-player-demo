@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 /// 弹幕数据模型
 ///
 /// 对应 Web 原型 DanmakuLayer.tsx 中的 Danmaku 接口
@@ -43,7 +41,7 @@ class Danmaku {
   final int time;
 
   /// 弹幕颜色（可选，默认白色）
-  final Color? color;
+  final int? color;
 
   /// 弹幕类型（默认滚动）
   final DanmakuType type;
@@ -63,7 +61,7 @@ class Danmaku {
       text: json['text'] as String,
       time: json['time'] as int,
       color: json['color'] != null
-          ? _parseColor(json['color'] as String)
+          ? _parseColor(json['color'].toString())
           : null,
       type: json['type'] != null
           ? _parseDanmakuType(json['type'] as String)
@@ -77,7 +75,7 @@ class Danmaku {
       'id': id,
       'text': text,
       'time': time,
-      if (color != null) 'color': color?.toARGB32().toRadixString(16),
+      if (color != null) 'color': color?.toRadixString(16),
       'type': type.name,
     };
   }
@@ -87,7 +85,7 @@ class Danmaku {
     String? id,
     String? text,
     int? time,
-    Color? color,
+    int? color,
     DanmakuType? type,
   }) {
     return Danmaku(
@@ -103,37 +101,60 @@ class Danmaku {
   ///
   /// 支持以下格式：
   /// - #RRGGBB (如 #FF00FF)
+  /// - #AARRGGBB (如 #FFFF00FF，ARGB 格式)
   /// - 0xRRGGBB (如 0xFF00FF)
   /// - 0xAARRGGBB (如 0xFFFF00FF，完整 ARGB)
-  static Color? _parseColor(String colorStr) {
+  /// - RRGGBB / AARRGGBB（无前缀）
+  static int? _parseColor(String colorStr) {
     try {
-      String? toParse;
+      final input = colorStr.trim();
+      if (input.isEmpty) return null;
+
+      String hex;
       int? alpha;
 
-      // 支持 #RRGGBB 格式
-      if (colorStr.startsWith('#')) {
-        toParse = colorStr.substring(1);
-        alpha = 0xFF; // 不透明
+      // 支持 #RRGGBB 或 #AARRGGBB 格式
+      if (input.startsWith('#')) {
+        hex = input.substring(1);
+        if (hex.length == 6) {
+          alpha = 0xFF; // 不透明
+        } else if (hex.length == 8) {
+          // ARGB 格式：alpha 包含在字符串中
+          alpha = null;
+        } else {
+          return null;
+        }
       }
       // 支持 0x 前缀格式
-      else if (colorStr.startsWith('0x') || colorStr.startsWith('0X')) {
-        toParse = colorStr.substring(2);
+      else if (input.startsWith('0x') || input.startsWith('0X')) {
+        hex = input.substring(2);
         // 判断是 RRGGBB (6位) 还是 ARGB (8位)
-        if (toParse.length == 6) {
+        if (hex.length == 6) {
           alpha = 0xFF; // RRGGBB 格式，默认不透明
-        } else if (toParse.length == 8) {
+        } else if (hex.length == 8) {
           // ARGB 格式，alpha 包含在字符串中
           alpha = null;
+        } else {
+          return null;
+        }
+      } else {
+        // 无前缀：RRGGBB / AARRGGBB
+        hex = input;
+        if (hex.length == 6) {
+          alpha = 0xFF;
+        } else if (hex.length == 8) {
+          alpha = null;
+        } else {
+          return null;
         }
       }
 
-      if (toParse != null) {
-        final value = int.parse(toParse, radix: 16);
-        if (alpha != null) {
-          return Color((alpha << 24) | value);
-        }
-        return Color(value);
+      final value = int.parse(hex, radix: 16);
+      if (alpha != null) {
+        return (alpha << 24) | value;
       }
+
+      return value;
     } catch (_) {
       // 解析失败，返回 null 使用默认颜色
     }
@@ -231,7 +252,7 @@ class ActiveDanmaku extends Danmaku {
     String? id,
     String? text,
     int? time,
-    Color? color,
+    int? color,
     DanmakuType? type,
     int? track,
     int? startTime,

@@ -1,5 +1,3 @@
-import 'package:flutter/material.dart';
-
 /// 弹幕数据模型
 ///
 /// 对应 Web 原型 DanmakuLayer.tsx 中的 Danmaku 接口
@@ -43,7 +41,7 @@ class Danmaku {
   final int time;
 
   /// 弹幕颜色（可选，默认白色）
-  final Color? color;
+  final int? color;
 
   /// 弹幕类型（默认滚动）
   final DanmakuType type;
@@ -63,7 +61,7 @@ class Danmaku {
       text: json['text'] as String,
       time: json['time'] as int,
       color: json['color'] != null
-          ? _parseColor(json['color'] as String)
+          ? _parseColor(json['color'].toString())
           : null,
       type: json['type'] != null
           ? _parseDanmakuType(json['type'] as String)
@@ -77,7 +75,7 @@ class Danmaku {
       'id': id,
       'text': text,
       'time': time,
-      if (color != null) 'color': color?.toARGB32().toRadixString(16),
+      if (color != null) 'color': color?.toRadixString(16),
       'type': type.name,
     };
   }
@@ -87,7 +85,7 @@ class Danmaku {
     String? id,
     String? text,
     int? time,
-    Color? color,
+    int? color,
     DanmakuType? type,
   }) {
     return Danmaku(
@@ -100,18 +98,50 @@ class Danmaku {
   }
 
   /// 解析颜色字符串
-  static Color? _parseColor(String colorStr) {
+  static int? _parseColor(String colorStr) {
     try {
-      // 支持 #RRGGBB 格式
-      if (colorStr.startsWith('#')) {
-        final value = int.parse(colorStr.substring(1), radix: 16);
-        return Color(0xFF000000 | value);
+      final input = colorStr.trim();
+      if (input.isEmpty) return null;
+
+      String hex;
+      int? alpha;
+
+      if (input.startsWith('#')) {
+        hex = input.substring(1);
+        if (hex.length == 6) {
+          alpha = 0xFF;
+        } else if (hex.length == 8) {
+          // ARGB format: alpha is in the first 2 chars
+          alpha = null;
+        } else {
+          return null;
+        }
+      } else if (input.startsWith('0x') || input.startsWith('0X')) {
+        hex = input.substring(2);
+        if (hex.length == 6) {
+          alpha = 0xFF;
+        } else if (hex.length == 8) {
+          alpha = null;
+        } else {
+          return null;
+        }
+      } else {
+        hex = input;
+        if (hex.length == 6) {
+          alpha = 0xFF;
+        } else if (hex.length == 8) {
+          alpha = null;
+        } else {
+          return null;
+        }
       }
-      // 支持 0xAARRGGBB 格式
-      final value = int.tryParse(colorStr);
-      if (value != null) {
-        return Color(value);
+
+      final value = int.parse(hex, radix: 16);
+      if (alpha != null) {
+        return (alpha << 24) | value;
       }
+
+      return value;
     } catch (_) {
       // 解析失败，返回 null 使用默认颜色
     }
@@ -209,7 +239,7 @@ class ActiveDanmaku extends Danmaku {
     String? id,
     String? text,
     int? time,
-    Color? color,
+    int? color,
     DanmakuType? type,
     int? track,
     int? startTime,
