@@ -12,8 +12,8 @@ import 'package:flutter/material.dart';
 /// 使用示例：
 /// ```dart
 /// DoubleTapDetector(
-///   onTap: () => print('单击'),
-///   onDoubleTap: () => print('双击'),
+///   onTap: () {},
+///   onDoubleTap: () {},
 ///   child: VideoView(),
 /// )
 /// ```

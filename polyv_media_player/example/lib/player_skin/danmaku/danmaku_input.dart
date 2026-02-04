@@ -61,6 +61,30 @@ class _DanmakuInputState extends State<DanmakuInput> {
     Color(0xFFCC0273), // 粉色
   ];
 
+  static const List<String> _emojis = [
+    '😀',
+    '😄',
+    '😁',
+    '😆',
+    '😉',
+    '😊',
+    '😍',
+    '😘',
+    '😋',
+    '😎',
+    '🤔',
+    '😮',
+    '😢',
+    '😭',
+    '😡',
+    '👍',
+    '👎',
+    '👏',
+    '🔥',
+    '🎉',
+    '💯',
+  ];
+
   /// 对应的十六进制颜色字符串
   static const List<String> _colorStrings = [
     '#ffffff',
@@ -74,10 +98,22 @@ class _DanmakuInputState extends State<DanmakuInput> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _textController.addListener(_onTextChanged);
+  }
+
+  @override
   void dispose() {
+    _textController.removeListener(_onTextChanged);
     _textController.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _onTextChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   /// 获取当前颜色（作为 Color 对象）
@@ -113,6 +149,65 @@ class _DanmakuInputState extends State<DanmakuInput> {
     } catch (e) {
       // 错误由调用方处理，这里不做额外处理
     }
+  }
+
+  void _insertText(String text) {
+    final value = _textController.value;
+    final selection = value.selection;
+    final start = selection.start < 0 ? value.text.length : selection.start;
+    final end = selection.end < 0 ? value.text.length : selection.end;
+
+    final newText = value.text.replaceRange(start, end, text);
+    if (newText.length > widget.maxLength) return;
+
+    final newOffset = start + text.length;
+    _textController.value = value.copyWith(
+      text: newText,
+      selection: TextSelection.collapsed(offset: newOffset),
+      composing: TextRange.empty,
+    );
+  }
+
+  Future<void> _openEmojiPicker() async {
+    if (widget.disabled || widget.isLoading) return;
+
+    _focusNode.unfocus();
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: PlayerColors.surface,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: GridView.count(
+              crossAxisCount: 8,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              children: _emojis
+                  .map(
+                    (emoji) => InkWell(
+                      onTap: () => Navigator.of(context).pop(emoji),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Center(
+                        child: Text(
+                          emoji,
+                          style: const TextStyle(fontSize: 22),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted) return;
+    if (selected != null) {
+      _insertText(selected);
+    }
+    _focusNode.requestFocus();
   }
 
   /// 选择颜色
@@ -263,11 +358,7 @@ class _DanmakuInputState extends State<DanmakuInput> {
   /// Emoji 按钮（占位，后续扩展）
   Widget _buildEmojiButton() {
     return GestureDetector(
-      onTap: widget.disabled
-          ? null
-          : () {
-              // TODO: 实现 Emoji 选择面板
-            },
+      onTap: widget.disabled || widget.isLoading ? null : _openEmojiPicker,
       child: MouseRegion(
         cursor: widget.disabled
             ? SystemMouseCursors.forbidden

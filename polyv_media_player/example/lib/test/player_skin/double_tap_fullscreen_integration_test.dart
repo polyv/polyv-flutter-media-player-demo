@@ -20,7 +20,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: DoubleTapDetector(
-              onTap: () => debugPrint('单击'),
+              onTap: () {},
               onDoubleTap: () {
                 doubleTapCalled = true;
                 isFullscreen = !isFullscreen; // 模拟全屏切换
@@ -52,7 +52,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: DoubleTapDetector(
-              onTap: () => debugPrint('单击'),
+              onTap: () {},
               onDoubleTap: () {
                 doubleTapCalled = true;
                 isFullscreen = !isFullscreen; // 模拟退出全屏
@@ -149,12 +149,12 @@ void main() {
             builder: (context, setState) {
               return Scaffold(
                 body: DoubleTapDetector(
-                  onTap: () => debugPrint('单击'),
+                  onTap: () {},
                   onDoubleTap: () {
                     // 在实际实现中，_handleDoubleTap() 会检查 _isLocked
                     // 这里模拟锁屏检查 - 测试锁屏状态
                     if (isLocked) {
-                      debugPrint('锁屏状态，忽略双击');
+                      // ignore
                     }
                   },
                   child: const SizedBox(width: 200, height: 200),
@@ -191,12 +191,12 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: DoubleTapDetector(
-              onTap: () => debugPrint('单击'),
+              onTap: () {},
               onDoubleTap: () {
                 // 在实际实现中，_handleDoubleTap() 会检查 _isSwitchingVideo
                 // 这里模拟切换视频状态检查 - 测试切换中状态
                 if (isSwitchingVideo) {
-                  debugPrint('切换视频中，忽略双击');
+                  // ignore
                 }
               },
               child: const SizedBox(width: 200, height: 200),
@@ -230,7 +230,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: DoubleTapDetector(
-              onTap: () => debugPrint('单击'),
+              onTap: () {},
               onDoubleTap: () {
                 // 全屏切换不应影响播放状态
                 isFullscreen = !isFullscreen;
@@ -263,7 +263,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: DoubleTapDetector(
-              onTap: () => debugPrint('单击'),
+              onTap: () {},
               onDoubleTap: () {
                 isFullscreen = !isFullscreen;
                 // 竖屏时双击进入全屏，应显示 fullscreen 图标

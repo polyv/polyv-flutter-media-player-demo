@@ -41,7 +41,7 @@ class SubtitlePreferenceService {
       );
     } catch (e) {
       // 静默失败，不影响播放
-      // print('Error saving subtitle preference: $e');
+      // Error saving subtitle preference: $e
     }
   }
 
