@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:polyv_media_player/polyv_media_player.dart';
+import 'package:polyv_media_player/utils/plv_logger.dart';
 import 'package:provider/provider.dart';
 import '../player_colors.dart';
 import '../../pages/download_center/download_center_page.dart';
@@ -361,17 +362,23 @@ class _SettingsMenuState extends State<SettingsMenu> {
               final vid = widget.controller.state.vid;
 
               // 调试日志：显示当前 vid 和所有任务的 vid 列表
-              debugPrint('[SettingsMenu] DownloadButton: current vid=$vid');
-              debugPrint('[SettingsMenu] DownloadButton: total tasks=${stateManager.totalCount}');
+              PlvLogger.d('[SettingsMenu] DownloadButton: current vid=$vid');
+              PlvLogger.d(
+                '[SettingsMenu] DownloadButton: total tasks=${stateManager.totalCount}',
+              );
               for (final task in stateManager.tasks) {
-                debugPrint('[SettingsMenu] DownloadButton: task vid=${task.vid}, id=${task.id}, status=${task.status.name}');
+                PlvLogger.d(
+                  '[SettingsMenu] DownloadButton: task vid=${task.vid}, id=${task.id}, status=${task.status.name}',
+                );
               }
 
               final existingTask = (vid == null || vid.isEmpty)
                   ? null
                   : stateManager.getTaskByVid(vid);
 
-              debugPrint('[SettingsMenu] DownloadButton: existingTask=$existingTask');
+              PlvLogger.d(
+                '[SettingsMenu] DownloadButton: existingTask=$existingTask',
+              );
 
               final String label;
               if (existingTask == null) {
@@ -386,7 +393,7 @@ class _SettingsMenuState extends State<SettingsMenu> {
                 label = '下载中';
               }
 
-              debugPrint('[SettingsMenu] DownloadButton: label=$label');
+              PlvLogger.d('[SettingsMenu] DownloadButton: label=$label');
 
               return _FunctionButton(
                 icon: Icons.download_rounded,
@@ -465,13 +472,15 @@ class _SettingsMenuState extends State<SettingsMenu> {
     }
 
     try {
-      debugPrint('[SettingsMenu] Calling startDownload with vid: $vid');
-      debugPrint('[SettingsMenu] Controller state vid: ${widget.controller.state.vid}');
+      PlvLogger.d('[SettingsMenu] Calling startDownload with vid: $vid');
+      PlvLogger.d(
+        '[SettingsMenu] Controller state vid: ${widget.controller.state.vid}',
+      );
 
       // 获取当前播放的清晰度
       final currentQuality = widget.controller.currentQuality;
       final qualityValue = currentQuality?.value; // "480p", "720p", "1080p"
-      debugPrint('[SettingsMenu] Current quality: $qualityValue');
+      PlvLogger.d('[SettingsMenu] Current quality: $qualityValue');
 
       // 调用原生层创建下载任务，传递当前清晰度
       await MethodChannelHandler.startDownload(
@@ -481,7 +490,7 @@ class _SettingsMenuState extends State<SettingsMenu> {
         quality: qualityValue,
       );
 
-      debugPrint(
+      PlvLogger.d(
         '[SettingsMenu] startDownload succeeded, syncing from native...',
       );
 
@@ -490,22 +499,24 @@ class _SettingsMenuState extends State<SettingsMenu> {
       final error = await stateManager.syncFromNative();
 
       if (error != null && mounted) {
-        debugPrint('[SettingsMenu] Sync failed: $error');
+        PlvLogger.w('[SettingsMenu] Sync failed: $error');
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('下载创建成功，但同步失败: $error')));
         return;
       }
 
-      debugPrint(
+      PlvLogger.d(
         '[SettingsMenu] Download task created and synced successfully',
       );
 
       // 验证任务是否被正确添加
       final task = stateManager.getTaskByVid(vid);
-      debugPrint('[SettingsMenu] After sync, getTaskByVid($vid) returned: $task');
+      PlvLogger.d(
+        '[SettingsMenu] After sync, getTaskByVid($vid) returned: $task',
+      );
       if (task != null) {
-        debugPrint('[SettingsMenu] Task status: ${task.status.name}');
+        PlvLogger.d('[SettingsMenu] Task status: ${task.status.name}');
       }
 
       // 显示成功提示
@@ -518,14 +529,14 @@ class _SettingsMenuState extends State<SettingsMenu> {
       // 关闭弹窗
       widget.onClose();
     } catch (e) {
-      debugPrint('[SettingsMenu] Create download task failed: $e');
-      debugPrint('[SettingsMenu] Error type: ${e.runtimeType}');
+      PlvLogger.w('[SettingsMenu] Create download task failed: $e');
+      PlvLogger.w('[SettingsMenu] Error type: ${e.runtimeType}');
 
       // 提取错误消息
       String errorMessage = '创建下载任务失败';
       if (e is PlatformException) {
         errorMessage = e.message ?? errorMessage;
-        debugPrint(
+        PlvLogger.w(
           '[SettingsMenu] PlatformException code: ${e.code}, message: ${e.message}',
         );
       } else if (e is Exception) {

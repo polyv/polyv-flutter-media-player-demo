@@ -1,5 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'package:polyv_media_player/services/polyv_config_service.dart';
+import 'package:polyv_media_player/utils/plv_logger.dart';
 
 /// Polyv 应用配置
 ///
@@ -33,7 +33,7 @@ class AppConfig {
   /// 应在应用启动时调用，在使用播放器功能之前
   static Future<void> inject() async {
     if (!isValid) {
-      debugPrint(
+      PlvLogger.w(
         '[AppConfig] WARNING: Polyv config is invalid. '
         'Please use --dart-define=POLYV_USER_ID=xxx --dart-define=POLYV_SECRET_KEY=xxx',
       );
@@ -47,9 +47,9 @@ class AppConfig {
         readToken: readToken.isEmpty ? null : readToken,
         writeToken: writeToken.isEmpty ? null : writeToken,
       );
-      debugPrint('[AppConfig] Config injected successfully');
+      PlvLogger.d('[AppConfig] Config injected successfully');
     } catch (e) {
-      debugPrint('[AppConfig] Failed to inject config: $e');
+      PlvLogger.w('[AppConfig] Failed to inject config: $e');
       rethrow;
     }
   }

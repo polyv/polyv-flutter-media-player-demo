@@ -1,7 +1,7 @@
-/// 弹幕数据模型
-///
-/// 对应 Web 原型 DanmakuLayer.tsx 中的 Danmaku 接口
-/// 参考: /Users/nick/projects/polyv/ios/polyv-vod/src/components/player/DanmakuLayer.tsx
+// 弹幕数据模型
+//
+// 对应 Web 原型 DanmakuLayer.tsx 中的 Danmaku 接口
+// 参考: /Users/nick/projects/polyv/ios/polyv-vod/src/components/player/DanmakuLayer.tsx
 
 /// 弹幕类型枚举
 enum DanmakuType {

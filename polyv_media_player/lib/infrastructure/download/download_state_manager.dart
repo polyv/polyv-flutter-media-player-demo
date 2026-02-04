@@ -3,8 +3,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'download_task.dart';
 import 'download_task_status.dart';
-import '../../platform_channel/method_channel_handler.dart';
 import '../../platform_channel/player_api.dart';
+import 'download_event_handler.dart';
+import 'download_native_repository.dart';
+import 'download_task_store.dart';
+import '../../utils/plv_logger.dart';
 
 /// 下载状态管理器
 ///
@@ -33,7 +36,10 @@ class DownloadStateManager extends ChangeNotifier {
     EventChannel? eventChannel,
     bool enableEventListener = true,
   }) : _channel = channel ?? _defaultChannel,
-       _eventChannel = eventChannel ?? _defaultEventChannel {
+       _eventChannel = eventChannel ?? _defaultEventChannel,
+       _store = DownloadTaskStore() {
+    _nativeRepository = DownloadNativeRepository(channel: _channel);
+    _eventHandler = DownloadEventHandler(store: _store);
     if (enableEventListener) {
       _startEventListener();
     }
@@ -59,11 +65,15 @@ class DownloadStateManager extends ChangeNotifier {
   StreamSubscription<dynamic>? _eventSubscription;
 
   /// 正在删除的任务 ID 集合，用于防止删除过程中的竞态条件
-  final Set<String> _deletingTaskIds = {};
+  Set<String> get _deletingTaskIds => _store.deletingTaskIds;
 
   /// 缓存暂停时的进度，用于恢复时避免显示0%
   /// Key: taskId, Value: downloadedBytes
-  final Map<String, int> _cachedProgress = {};
+  Map<String, int> get _cachedProgress => _store.cachedProgress;
+
+  final DownloadTaskStore _store;
+  late final DownloadNativeRepository _nativeRepository;
+  late final DownloadEventHandler _eventHandler;
 
   /// Story 9.8: 启动 EventChannel 事件监听
   void _startEventListener() {
@@ -74,57 +84,47 @@ class DownloadStateManager extends ChangeNotifier {
         }
       },
       onError: (dynamic error) {
-        debugPrint('DownloadStateManager: EventChannel error - $error');
+        PlvLogger.w('DownloadStateManager: EventChannel error - $error');
       },
     );
   }
 
   /// 所有下载任务
-  List<DownloadTask> _tasks = [];
+  List<DownloadTask> get _tasks => _store.tasks;
 
   /// 获取所有任务（不可变副本）
-  List<DownloadTask> get tasks => List.unmodifiable(_tasks);
+  List<DownloadTask> get tasks => _store.tasks;
 
   /// 获取下载中的任务
   ///
   /// 包含：准备中、等待中、下载中、已暂停、失败的任务
   List<DownloadTask> get downloadingTasks {
-    return _tasks.where((t) => t.status.isInProgress).toList();
+    return _store.downloadingTasks;
   }
 
   /// 获取已完成的任务
   List<DownloadTask> get completedTasks {
-    return _tasks
-        .where((t) => t.status == DownloadTaskStatus.completed)
-        .toList();
+    return _store.completedTasks;
   }
 
   /// 获取活跃下载任务（正在下载，不包括暂停和失败）
   List<DownloadTask> get activeTasks {
-    return _tasks.where((t) => t.status.isActive).toList();
+    return _store.activeTasks;
   }
 
   /// 获取任务数量
-  int get downloadingCount => downloadingTasks.length;
-  int get completedCount => completedTasks.length;
-  int get totalCount => _tasks.length;
+  int get downloadingCount => _store.downloadingCount;
+  int get completedCount => _store.completedCount;
+  int get totalCount => _store.totalCount;
 
   /// 根据 ID 查找任务
   DownloadTask? getTaskById(String id) {
-    try {
-      return _tasks.firstWhere((t) => t.id == id);
-    } catch (_) {
-      return null;
-    }
+    return _store.getTaskById(id);
   }
 
   /// 根据 VID 查找任务
   DownloadTask? getTaskByVid(String vid) {
-    try {
-      return _tasks.firstWhere((t) => t.vid == vid);
-    } catch (_) {
-      return null;
-    }
+    return _store.getTaskByVid(vid);
   }
 
   /// 添加新任务
@@ -133,13 +133,19 @@ class DownloadStateManager extends ChangeNotifier {
     final existingIndex = _tasks.indexWhere((t) => t.id == task.id);
     if (existingIndex >= 0) {
       // 更新现有任务
-      debugPrint('[DownloadStateManager] addTask: updating existing task id=${task.id}, vid=${task.vid}');
-      _tasks[existingIndex] = task;
+      PlvLogger.d(
+        '[DownloadStateManager] addTask: updating existing task id=${task.id}, vid=${task.vid}',
+      );
+      _store.updateTask(task.id, task);
     } else {
       // 添加新任务
-      debugPrint('[DownloadStateManager] addTask: adding new task id=${task.id}, vid=${task.vid}');
-      debugPrint('[DownloadStateManager] addTask: current tasks count=${_tasks.length}');
-      _tasks.add(task);
+      PlvLogger.d(
+        '[DownloadStateManager] addTask: adding new task id=${task.id}, vid=${task.vid}',
+      );
+      PlvLogger.d(
+        '[DownloadStateManager] addTask: current tasks count=${_tasks.length}',
+      );
+      _store.addTask(task);
     }
     notifyListeners();
   }
@@ -149,9 +155,9 @@ class DownloadStateManager extends ChangeNotifier {
     for (final task in tasks) {
       final existingIndex = _tasks.indexWhere((t) => t.id == task.id);
       if (existingIndex >= 0) {
-        _tasks[existingIndex] = task;
+        _store.updateTask(task.id, task);
       } else {
-        _tasks.add(task);
+        _store.addTask(task);
       }
     }
     notifyListeners();
@@ -161,13 +167,13 @@ class DownloadStateManager extends ChangeNotifier {
   void updateTask(String id, DownloadTask updatedTask) {
     final index = _tasks.indexWhere((t) => t.id == id);
     if (index >= 0) {
-      _tasks[index] = updatedTask;
-      debugPrint(
+      _store.updateTask(id, updatedTask);
+      PlvLogger.d(
         '[DownloadStateManager] updateTask: notifying listeners for id=$id, progress=${updatedTask.progressPercent}%',
       );
       notifyListeners();
     } else {
-      debugPrint(
+      PlvLogger.d(
         '[DownloadStateManager] updateTask: task not found for id=$id',
       );
     }
@@ -183,34 +189,39 @@ class DownloadStateManager extends ChangeNotifier {
   }) {
     final task = getTaskById(id);
     if (task == null) {
-      debugPrint(
+      PlvLogger.d(
         '[DownloadStateManager] updateTaskProgress: task not found for id=$id',
       );
       return;
     }
 
-    final updatedTask = task.copyWith(
+    final updated = _store.updateTaskProgress(
+      id,
       downloadedBytes: downloadedBytes,
       bytesPerSecond: bytesPerSecond,
       status: status,
       errorMessage: errorMessage,
-      completedAt: status == DownloadTaskStatus.completed
-          ? DateTime.now()
-          : task.completedAt,
     );
 
-    debugPrint(
+    if (!updated) {
+      return;
+    }
+
+    final updatedTask = getTaskById(id);
+    if (updatedTask == null) return;
+
+    PlvLogger.d(
       '[DownloadStateManager] updateTaskProgress: id=$id, '
       'progress=${updatedTask.progressPercent}%, '
       'downloadedBytes=${updatedTask.downloadedBytes}, '
       'totalBytes=${updatedTask.totalBytes}',
     );
-    updateTask(id, updatedTask);
+    notifyListeners();
   }
 
   /// 删除任务
   void removeTask(String id) {
-    _tasks.removeWhere((t) => t.id == id);
+    _store.removeTask(id);
     notifyListeners();
   }
 
@@ -235,7 +246,7 @@ class DownloadStateManager extends ChangeNotifier {
       // 强一致：原生调用成功才更新本地状态
       // 如果原生层调用失败，MethodChannelHandler.deleteDownload 会抛出 PlatformException
       // 异常会中断执行，本地状态不会被修改
-      await MethodChannelHandler.deleteDownload(_channel, task.vid);
+      await _nativeRepository.deleteDownload(task.vid);
 
       removeTask(id);
     } finally {
@@ -246,25 +257,25 @@ class DownloadStateManager extends ChangeNotifier {
 
   /// 批量删除任务
   void removeTasks(List<String> ids) {
-    _tasks.removeWhere((t) => ids.contains(t.id));
+    _store.removeTasks(ids);
     notifyListeners();
   }
 
   /// 清空所有任务
   void clearAll() {
-    _tasks.clear();
+    _store.clearAll();
     notifyListeners();
   }
 
   /// 清空已完成的任务
   void clearCompleted() {
-    _tasks.removeWhere((t) => t.status == DownloadTaskStatus.completed);
+    _store.clearCompleted();
     notifyListeners();
   }
 
   /// 替换所有任务（用于从 SDK 同步完整列表）
   void replaceAll(List<DownloadTask> tasks) {
-    _tasks = List.from(tasks);
+    _store.replaceAll(tasks);
     notifyListeners();
   }
 
@@ -283,11 +294,15 @@ class DownloadStateManager extends ChangeNotifier {
   /// - 热重载后恢复状态
   Future<String?> syncFromNative() async {
     try {
-      debugPrint('[DownloadStateManager] syncFromNative: calling getDownloadList...');
-      final List<Map<String, dynamic>> rawList =
-          await MethodChannelHandler.getDownloadList(_channel);
+      PlvLogger.d(
+        '[DownloadStateManager] syncFromNative: calling getDownloadList...',
+      );
+      final List<Map<String, dynamic>> rawList = await _nativeRepository
+          .getDownloadList();
 
-      debugPrint('[DownloadStateManager] syncFromNative: received ${rawList.length} tasks from native');
+      PlvLogger.d(
+        '[DownloadStateManager] syncFromNative: received ${rawList.length} tasks from native',
+      );
 
       final List<DownloadTask> tasks = rawList
           .map((json) => DownloadTask.fromJson(json))
@@ -295,16 +310,20 @@ class DownloadStateManager extends ChangeNotifier {
 
       // 打印每个任务的 vid 和状态
       for (final task in tasks) {
-        debugPrint('[DownloadStateManager] syncFromNative: task vid=${task.vid}, id=${task.id}, status=${task.status.name}');
+        PlvLogger.d(
+          '[DownloadStateManager] syncFromNative: task vid=${task.vid}, id=${task.id}, status=${task.status.name}',
+        );
       }
 
       replaceAll(tasks);
       return null;
     } on PlatformException catch (e) {
-      debugPrint('[DownloadStateManager] syncFromNative: PlatformException - ${e.message}');
+      PlvLogger.w(
+        '[DownloadStateManager] syncFromNative: PlatformException - ${e.message}',
+      );
       return e.message ?? '同步下载列表失败';
     } catch (e) {
-      debugPrint('[DownloadStateManager] syncFromNative: Exception - $e');
+      PlvLogger.w('[DownloadStateManager] syncFromNative: Exception - $e');
       return '同步下载列表失败: $e';
     }
   }
@@ -314,201 +333,10 @@ class DownloadStateManager extends ChangeNotifier {
   /// 根据事件类型更新对应任务的状态。
   /// 事件格式：{ "type": "taskProgress|taskCompleted|taskFailed|taskRemoved|taskPaused|taskResumed", "data": { ... } }
   void handleDownloadEvent(Map<String, dynamic> event) {
-    final String? type = event['type'] as String?;
-    final dynamic rawData = event['data'];
-    final Map<String, dynamic>? data = rawData is Map
-        ? Map<String, dynamic>.from(rawData)
-        : null;
-
-    if (type == null || data == null) {
-      debugPrint(
-        '[DownloadStateManager] handleDownloadEvent: invalid event, type=$type, data=$data',
-      );
-      return;
+    final updated = _eventHandler.handleDownloadEvent(event);
+    if (updated) {
+      notifyListeners();
     }
-
-    final String? id = data['id'] as String?;
-    if (id == null) {
-      debugPrint(
-        '[DownloadStateManager] handleDownloadEvent: missing id in data',
-      );
-      return;
-    }
-
-    debugPrint('[DownloadStateManager] handleDownloadEvent: type=$type, id=$id');
-
-    // 如果任务正在被删除，忽略该事件（防止竞态条件）
-    if (_deletingTaskIds.contains(id)) {
-      debugPrint(
-        '[DownloadStateManager] handleDownloadEvent: ignoring event for deleting task id=$id',
-      );
-      return;
-    }
-
-    debugPrint(
-      '[DownloadStateManager] handleDownloadEvent: type=$type, id=$id',
-    );
-
-    switch (type) {
-      case 'taskProgress':
-        _handleTaskProgress(id, data);
-        break;
-      case 'taskCompleted':
-        _handleTaskCompleted(id, data);
-        break;
-      case 'taskFailed':
-        _handleTaskFailed(id, data);
-        break;
-      case 'taskRemoved':
-        _handleTaskRemoved(id);
-        break;
-      case 'taskPaused':
-        _handleTaskPaused(id);
-        break;
-      case 'taskResumed':
-        _handleTaskResumed(id);
-        break;
-    }
-  }
-
-  void _handleTaskProgress(String id, Map<String, dynamic> data) {
-    final task = getTaskById(id);
-    if (task == null) {
-      // 任务不存在，尝试从事件数据创建新任务
-      debugPrint('[DownloadStateManager] _handleTaskProgress: task not found for id=$id, trying to create from event data');
-      if (_canCreateTaskFromData(data)) {
-        final newTask = DownloadTask.fromJson({
-          'id': id,
-          ...data,
-          'createdAt': DateTime.now().toIso8601String(),
-        });
-        debugPrint('[DownloadStateManager] _handleTaskProgress: creating new task from event, id=$id, vid=${newTask.vid}');
-        addTask(newTask);
-        debugPrint(
-          '[DownloadStateManager] Created new task from progress event: $id',
-        );
-      } else {
-        debugPrint(
-          '[DownloadStateManager] Task not found for progress event: $id, data: $data',
-        );
-      }
-      return;
-    }
-
-    // 获取事件中的下载字节数
-    final int? eventDownloadedBytes = data['downloadedBytes'] as int?;
-    int? effectiveDownloadedBytes = eventDownloadedBytes;
-
-    // 如果有缓存的进度且新进度为0或小于缓存，使用缓存值
-    // 这解决了恢复下载时暂时显示0%的问题
-    if (_cachedProgress.containsKey(id)) {
-      final cachedBytes = _cachedProgress[id]!;
-      if (eventDownloadedBytes == null || eventDownloadedBytes < cachedBytes) {
-        debugPrint(
-          '[DownloadStateManager] _handleTaskProgress: using cached progress for id=$id, cached=$cachedBytes, event=$eventDownloadedBytes',
-        );
-        effectiveDownloadedBytes = cachedBytes;
-      } else if (eventDownloadedBytes > cachedBytes) {
-        // 新进度超过缓存，清除缓存
-        debugPrint(
-          '[DownloadStateManager] _handleTaskProgress: clearing cache for id=$id, cached=$cachedBytes, new=$eventDownloadedBytes',
-        );
-        _cachedProgress.remove(id);
-      }
-    }
-
-    debugPrint('[DownloadStateManager] _handleTaskProgress: updating existing task id=$id, downloadedBytes=$effectiveDownloadedBytes');
-    updateTaskProgress(
-      id,
-      downloadedBytes: effectiveDownloadedBytes,
-      bytesPerSecond: data['bytesPerSecond'] as int?,
-      status: _parseStatusFromString(data['status'] as String?),
-    );
-  }
-
-  /// 检查事件数据是否包含足够的信息来创建新任务
-  bool _canCreateTaskFromData(Map<String, dynamic> data) {
-    return data.containsKey('vid') &&
-        data.containsKey('title') &&
-        data.containsKey('totalBytes');
-  }
-
-  void _handleTaskCompleted(String id, Map<String, dynamic> data) {
-    final task = getTaskById(id);
-    if (task == null) return;
-
-    // 清除进度缓存
-    _cachedProgress.remove(id);
-
-    final completedAtStr = data['completedAt'] as String?;
-    final completedAt = completedAtStr != null
-        ? DateTime.tryParse(completedAtStr)
-        : null;
-
-    final updatedTask = task.copyWith(
-      status: DownloadTaskStatus.completed,
-      downloadedBytes: task.totalBytes,
-      bytesPerSecond: 0,
-      completedAt: completedAt ?? DateTime.now(),
-    );
-
-    updateTask(id, updatedTask);
-  }
-
-  void _handleTaskFailed(String id, Map<String, dynamic> data) {
-    final task = getTaskById(id);
-    if (task == null) return;
-
-    // 清除进度缓存
-    _cachedProgress.remove(id);
-
-    final errorMessage = data['errorMessage'] as String?;
-
-    final updatedTask = task.copyWith(
-      status: DownloadTaskStatus.error,
-      errorMessage: errorMessage,
-      bytesPerSecond: 0,
-    );
-
-    updateTask(id, updatedTask);
-  }
-
-  void _handleTaskRemoved(String id) {
-    debugPrint('[DownloadStateManager] _handleTaskRemoved called with id=$id');
-    // 清除进度缓存
-    _cachedProgress.remove(id);
-
-    final task = getTaskById(id);
-    if (task != null) {
-      debugPrint(
-        '[DownloadStateManager] _handleTaskRemoved: removing task vid=${task.vid}, status=${task.status.name}',
-      );
-    } else {
-      debugPrint(
-        '[DownloadStateManager] _handleTaskRemoved: task not found for id=$id',
-      );
-    }
-    removeTask(id);
-  }
-
-  void _handleTaskPaused(String id) {
-    updateTaskProgress(
-      id,
-      status: DownloadTaskStatus.paused,
-      bytesPerSecond: 0,
-    );
-  }
-
-  void _handleTaskResumed(String id) {
-    updateTaskProgress(id, status: DownloadTaskStatus.downloading);
-  }
-
-  DownloadTaskStatus? _parseStatusFromString(String? statusStr) {
-    if (statusStr == null) return null;
-    for (final status in DownloadTaskStatus.values) {
-      if (status.name == statusStr) return status;
-    }
-    return null;
   }
 
   /// 暂停任务
@@ -541,14 +369,14 @@ class DownloadStateManager extends ChangeNotifier {
 
     // 缓存当前下载字节数，用于恢复时避免显示0%
     _cachedProgress[id] = task.downloadedBytes;
-    debugPrint(
+    PlvLogger.d(
       '[DownloadStateManager] pauseTask: cached progress for id=$id, bytes=${task.downloadedBytes}',
     );
 
     // 强一致：原生调用成功才更新本地状态
     // 如果原生层调用失败，MethodChannelHandler.pauseDownload 会抛出 PlatformException
     // 异常会中断执行，本地状态不会被修改
-    await MethodChannelHandler.pauseDownload(_channel, task.vid);
+    await _nativeRepository.pauseDownload(task.vid);
 
     updateTaskProgress(id, status: DownloadTaskStatus.paused);
   }
@@ -581,7 +409,7 @@ class DownloadStateManager extends ChangeNotifier {
     // 强一致：原生调用成功才更新本地状态
     // 如果原生层调用失败，MethodChannelHandler.resumeDownload 会抛出 PlatformException
     // 异常会中断执行，本地状态不会被修改
-    await MethodChannelHandler.resumeDownload(_channel, task.vid);
+    await _nativeRepository.resumeDownload(task.vid);
 
     updateTaskProgress(id, status: DownloadTaskStatus.downloading);
   }
@@ -610,7 +438,7 @@ class DownloadStateManager extends ChangeNotifier {
     // 强一致：原生调用成功才更新本地状态
     // 如果原生层调用失败，MethodChannelHandler.retryDownload 会抛出 PlatformException
     // 异常会中断执行，本地状态不会被修改
-    await MethodChannelHandler.retryDownload(_channel, task.vid);
+    await _nativeRepository.retryDownload(task.vid);
 
     final updatedTask = task.copyWith(
       status: DownloadTaskStatus.downloading,

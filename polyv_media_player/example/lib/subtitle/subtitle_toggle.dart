@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:polyv_media_player/polyv_media_player.dart';
+import 'package:polyv_media_player/utils/plv_logger.dart';
 import '../player_skin/player_colors.dart';
 
 /// 字幕开关组件
@@ -32,7 +33,7 @@ class _SubtitleToggleState extends State<SubtitleToggle> {
       behavior: HitTestBehavior.opaque,
       onTap: hasSubtitles
           ? () {
-              debugPrint(
+              PlvLogger.d(
                 '[SubtitleToggle] button tapped, will open subtitle sheet. isEnabled=$isEnabled, hasSubtitles=$hasSubtitles',
               );
               _openSubtitleSheet();
@@ -159,7 +160,7 @@ class _SubtitleToggleState extends State<SubtitleToggle> {
   }) {
     return InkWell(
       onTap: () {
-        debugPrint(
+        PlvLogger.d(
           '[SubtitleToggle] item tapped: label=$label, isActive=$isActive, isBilingual=$isBilingual',
         );
         onTap();

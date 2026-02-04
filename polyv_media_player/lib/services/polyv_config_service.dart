@@ -1,7 +1,7 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../platform_channel/player_api.dart';
 import '../platform_channel/method_channel_handler.dart';
+import '../utils/plv_logger.dart';
 
 /// Polyv 配置模型
 class PolyvConfigModel {
@@ -107,21 +107,21 @@ class PolyvConfigService {
     _isLoading = true;
 
     try {
-      debugPrint('[PolyvConfigService] Loading config from native layer...');
+      PlvLogger.d('[PolyvConfigService] Loading config from native layer...');
 
       final configMap = await MethodChannelHandler.getConfig(_methodChannel);
 
       _config = PolyvConfigModel.fromJson(configMap);
 
-      debugPrint('[PolyvConfigService] Config loaded: $_config');
+      PlvLogger.d('[PolyvConfigService] Config loaded: $_config');
 
       if (!_config!.isValid) {
-        debugPrint('[PolyvConfigService] WARNING: Config is invalid!');
+        PlvLogger.w('[PolyvConfigService] WARNING: Config is invalid!');
       }
 
       return _config!;
     } catch (e) {
-      debugPrint('[PolyvConfigService] Failed to load config: $e');
+      PlvLogger.w('[PolyvConfigService] Failed to load config: $e');
       rethrow;
     } finally {
       _isLoading = false;
@@ -130,7 +130,7 @@ class PolyvConfigService {
 
   /// 清除缓存的配置
   void clearCache() {
-    debugPrint('[PolyvConfigService] Clearing config cache');
+    PlvLogger.d('[PolyvConfigService] Clearing config cache');
     _config = null;
   }
 
@@ -178,7 +178,7 @@ class PolyvConfigService {
     String? readToken,
     String? writeToken,
   }) async {
-    debugPrint('[PolyvConfigService] Injecting account config...');
+    PlvLogger.d('[PolyvConfigService] Injecting account config...');
 
     try {
       await _methodChannel.invokeMethod('initialize', {
@@ -197,11 +197,11 @@ class PolyvConfigService {
       );
       _isConfigInjected = true;
 
-      debugPrint(
+      PlvLogger.d(
         '[PolyvConfigService] Account config injected successfully: userId=$userId',
       );
     } catch (e) {
-      debugPrint('[PolyvConfigService] Failed to inject account config: $e');
+      PlvLogger.w('[PolyvConfigService] Failed to inject account config: $e');
       rethrow;
     }
   }

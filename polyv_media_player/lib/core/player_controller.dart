@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../platform_channel/event_channel_handler.dart';
@@ -7,9 +6,14 @@ import '../platform_channel/method_channel_handler.dart';
 import '../platform_channel/player_api.dart';
 import '../services/subtitle_preference_service.dart';
 import '../infrastructure/download/download_state_manager.dart';
+import '../utils/plv_logger.dart';
 import 'player_exception.dart';
 import 'player_state.dart';
 import 'player_events.dart';
+import 'player_event_parser.dart';
+import 'subtitle_selection_policy.dart';
+import 'system_locale_provider.dart';
+import 'offline_playback_decider.dart';
 
 /// Method Channel 名称
 const String _kMethodChannelName = PlayerApi.methodChannelName;
@@ -44,6 +48,11 @@ class PlayerController extends ChangeNotifier {
 
   /// 当前字幕索引（-1 表示关闭）
   int _currentSubtitleIndex = -1;
+
+  final PlayerEventParser _eventParser;
+  final SubtitleSelectionPolicy _subtitleSelectionPolicy;
+  final SystemLocaleProvider _systemLocaleProvider;
+  final OfflinePlaybackDecider _offlinePlaybackDecider;
 
   /// 是否已释放
   bool _disposed = false;
@@ -91,9 +100,34 @@ class PlayerController extends ChangeNotifier {
   }
 
   /// 构造函数
-  PlayerController({String? methodChannelName, String? eventChannelName})
-    : _methodChannel = MethodChannel(methodChannelName ?? _kMethodChannelName),
-      _eventChannel = EventChannel(eventChannelName ?? _kEventChannelName) {
+  PlayerController({
+    String? methodChannelName,
+    String? eventChannelName,
+    PlayerEventParser? eventParser,
+    SubtitleSelectionPolicy? subtitleSelectionPolicy,
+    SystemLocaleProvider? systemLocaleProvider,
+    OfflinePlaybackDecider? offlinePlaybackDecider,
+  }) : _methodChannel = MethodChannel(methodChannelName ?? _kMethodChannelName),
+       _eventChannel = EventChannel(eventChannelName ?? _kEventChannelName),
+       _eventParser = eventParser ?? const PlayerEventParser(),
+       _subtitleSelectionPolicy =
+           subtitleSelectionPolicy ?? const SubtitleSelectionPolicy(),
+       _systemLocaleProvider =
+           systemLocaleProvider ?? const PlatformSystemLocaleProvider(),
+       _offlinePlaybackDecider =
+           offlinePlaybackDecider ??
+           OfflinePlaybackDecider(
+             isDownloaded: (vid) {
+               try {
+                 return DownloadStateManager.instance.isCompleted(vid);
+               } catch (e) {
+                 PlvLogger.w(
+                   '[PlayerController] Error checking offline mode for vid $vid: $e',
+                 );
+                 return false;
+               }
+             },
+           ) {
     _initEventChannel();
     _initMethodCallHandler();
   }
@@ -114,7 +148,7 @@ class PlayerController extends ChangeNotifier {
   Future<dynamic> _handleMethodCall(MethodCall call) async {
     switch (call.method) {
       default:
-        debugPrint('[PlayerController] Unknown method call: ${call.method}');
+        PlvLogger.d('[PlayerController] Unknown method call: ${call.method}');
     }
   }
 
@@ -122,22 +156,22 @@ class PlayerController extends ChangeNotifier {
   void _onEvent(dynamic event) {
     // 频繁日志已移除，减少控制台噪音
     if (_disposed) {
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] _onEvent: controller is disposed, ignoring',
       );
       return;
     }
 
-    // 接受 Map 类型（无论是 Map<String, dynamic> 还是 Map<Object?, Object?>）
-    if (event is! Map) {
-      debugPrint(
+    final parsed = _eventParser.tryParse(event);
+    if (parsed == null) {
+      PlvLogger.d(
         '[PlayerController] _onEvent: event is not Map, it is ${event.runtimeType}',
       );
       return;
     }
 
-    final typeStr = event['type']?.toString();
-    final data = event['data'] as Map<dynamic, dynamic>?;
+    final typeStr = parsed.type;
+    final data = parsed.data;
 
     switch (typeStr) {
       case PlayerEventName.stateChanged:
@@ -162,13 +196,13 @@ class PlayerController extends ChangeNotifier {
         _handleCompleted();
         break;
       default:
-        debugPrint('[PlayerController] Unknown event type: $typeStr');
+        PlvLogger.d('[PlayerController] Unknown event type: $typeStr');
     }
   }
 
   /// 处理事件错误
   void _onEventError(dynamic error) {
-    debugPrint('[PlayerController] Event error: $error');
+    PlvLogger.w('[PlayerController] Event error: $error');
   }
 
   /// 处理状态变化
@@ -210,13 +244,13 @@ class PlayerController extends ChangeNotifier {
 
   /// 处理清晰度变化
   void _handleQualityChanged(Map<dynamic, dynamic>? data) {
-    debugPrint('[PlayerController] _handleQualityChanged called, data: $data');
+    PlvLogger.d('[PlayerController] _handleQualityChanged called, data: $data');
     if (data == null) return;
 
     final qualitiesList = data['qualities'] as List<dynamic>?;
     final currentIndex = data['currentIndex'] as int? ?? 0;
 
-    debugPrint(
+    PlvLogger.d(
       '[PlayerController] qualitiesList: $qualitiesList, currentIndex: $currentIndex',
     );
 
@@ -226,7 +260,7 @@ class PlayerController extends ChangeNotifier {
         return QualityItem.fromJson(map);
       }).toList();
       _currentQualityIndex = currentIndex;
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] Updated qualities: ${_qualities.length} items, current: $_currentQualityIndex',
       );
       notifyListeners();
@@ -235,7 +269,7 @@ class PlayerController extends ChangeNotifier {
 
   /// 处理字幕变化
   void _handleSubtitleChanged(Map<dynamic, dynamic>? data) {
-    debugPrint(
+    PlvLogger.d(
       '[PlayerController] _handleSubtitleChanged called, raw data: $data',
     );
     if (data == null) return;
@@ -255,14 +289,14 @@ class PlayerController extends ChangeNotifier {
         return SubtitleItem.fromJson(map);
       }).toList();
 
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] Parsed subtitles: count=${_subtitles.length}, currentIndex=$currentIndex, enabled=$enabled, trackKey=$trackKey',
       );
 
       // 如果是关闭字幕事件（enabled == false 且 currentIndex < 0），
       // 不要触发默认算法或用户偏好恢复，直接更新为关闭状态。
       if (!enabled && currentIndex < 0) {
-        debugPrint(
+        PlvLogger.d(
           '[PlayerController] Received disable-subtitle event from native (enabled=false, currentIndex<0), updating state to disabled.',
         );
         _currentSubtitleIndex = -1;
@@ -306,7 +340,7 @@ class PlayerController extends ChangeNotifier {
         ),
       );
 
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] _handleSubtitleChanged updated state: subtitleEnabled=${_state.subtitleEnabled}, currentSubtitleId=${_state.currentSubtitleId}, availableSubtitles=${_subtitles.length}',
       );
     }
@@ -338,7 +372,7 @@ class PlayerController extends ChangeNotifier {
 
         if (savedIndex >= 0) {
           // 找到保存的字幕，应用用户偏好
-          debugPrint(
+          PlvLogger.d(
             '[PlayerController] Applying user preference: ${preference.trackKey} at index $savedIndex',
           );
           await setSubtitleWithKey(
@@ -347,12 +381,12 @@ class PlayerController extends ChangeNotifier {
           );
           return;
         } else {
-          debugPrint(
+          PlvLogger.d(
             '[PlayerController] Saved subtitle trackKey "${preference.trackKey}" not found in current list',
           );
         }
       } else {
-        debugPrint(
+        PlvLogger.d(
           '[PlayerController] No saved subtitle preference for vid: $vid',
         );
       }
@@ -360,7 +394,7 @@ class PlayerController extends ChangeNotifier {
       // 没有有效偏好，使用默认算法
       _applyDefaultSelection();
     } catch (e) {
-      debugPrint(
+      PlvLogger.w(
         '[PlayerController] Error loading subtitle preference: $e, using default selection',
       );
       _applyDefaultSelection();
@@ -373,7 +407,7 @@ class PlayerController extends ChangeNotifier {
 
     if (defaultIndex >= 0 && defaultIndex < _subtitles.length) {
       final targetSubtitle = _subtitles[defaultIndex];
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] Applying default selection: ${targetSubtitle.trackKey} at index $defaultIndex',
       );
 
@@ -391,13 +425,13 @@ class PlayerController extends ChangeNotifier {
         enabled: true,
         trackKey: targetSubtitle.trackKey,
       ).catchError((e) {
-        debugPrint(
+        PlvLogger.w(
           '[PlayerController] Failed to sync default subtitle to native: $e',
         );
       });
     } else {
       // 没有可用字幕
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] No available subtitles, disabling subtitle',
       );
       _currentSubtitleIndex = -1;
@@ -426,7 +460,7 @@ class PlayerController extends ChangeNotifier {
     // 1. 优先选择双语字幕
     final bilingualIndex = _subtitles.indexWhere((s) => s.isBilingual);
     if (bilingualIndex >= 0) {
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] Selected bilingual subtitle at index $bilingualIndex',
       );
       return bilingualIndex;
@@ -435,7 +469,7 @@ class PlayerController extends ChangeNotifier {
     // 2. 单语与系统语言匹配
     final systemLanguageIndex = _findBestLanguageMatchIndex();
     if (systemLanguageIndex >= 0) {
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] Selected system language match at index $systemLanguageIndex',
       );
       return systemLanguageIndex;
@@ -444,14 +478,14 @@ class PlayerController extends ChangeNotifier {
     // 3. 其次选择原生标记为默认的
     final defaultIndex = _subtitles.indexWhere((s) => s.isDefault);
     if (defaultIndex >= 0) {
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] Selected default subtitle at index $defaultIndex',
       );
       return defaultIndex;
     }
 
     // 4. 否则选择第一条字幕
-    debugPrint('[PlayerController] Selected first subtitle at index 0');
+    PlvLogger.d('[PlayerController] Selected first subtitle at index 0');
     return 0;
   }
 
@@ -464,61 +498,17 @@ class PlayerController extends ChangeNotifier {
   ///
   /// 返回值：最佳匹配的索引，未找到返回 -1
   int _findBestLanguageMatchIndex() {
-    final platformDispatcher = ui.PlatformDispatcher.instance;
-    final systemLanguage =
-        platformDispatcher.locale.languageCode; // 如 "zh", "en"
-    final systemScript =
-        platformDispatcher.locale.scriptCode; // 如 "Hans", "Latn"
-    final systemCountry = platformDispatcher.locale.countryCode; // 如 "CN", "US"
-
-    debugPrint(
-      '[PlayerController] System locale: $systemLanguage-$systemScript-$systemCountry',
+    final locale = _systemLocaleProvider.currentLocale;
+    PlvLogger.d(
+      '[PlayerController] System locale: ${locale.languageCode}-${locale.scriptCode}-${locale.countryCode}',
     );
 
-    // 构建完整的语言标签用于匹配，优先级从高到低
-    final possibleTags = <String>[
-      if (systemScript != null && systemCountry != null)
-        '$systemLanguage-$systemScript-$systemCountry', // zh-Hans-CN
-      if (systemScript != null) '$systemLanguage-$systemScript', // zh-Hans
-      if (systemCountry != null) '$systemLanguage-$systemCountry', // zh-CN
-      systemLanguage, // zh
-    ];
-
-    debugPrint('[PlayerController] Possible language tags: $possibleTags');
-
-    // 按优先级查找匹配
-    for (final tag in possibleTags) {
-      final index = _subtitles.indexWhere((s) {
-        final lang = s.language.toLowerCase();
-        return lang == tag.toLowerCase() ||
-            lang.startsWith('$tag-') ||
-            tag.startsWith('$lang-');
-      });
-      if (index >= 0) {
-        debugPrint(
-          '[PlayerController] Found language match: $tag -> index $index',
-        );
-        return index;
-      }
-    }
-
-    // 尝试模糊匹配（仅使用语言码前缀）
-    for (final tag in possibleTags) {
-      final langPrefix = tag.split('-')[0];
-      final index = _subtitles.indexWhere((s) {
-        final lang = s.language.toLowerCase().split('-')[0];
-        return lang == langPrefix;
-      });
-      if (index >= 0) {
-        debugPrint(
-          '[PlayerController] Found fuzzy language match: $langPrefix -> index $index',
-        );
-        return index;
-      }
-    }
-
-    debugPrint('[PlayerController] No system language match found');
-    return -1;
+    final index = _subtitleSelectionPolicy.findBestLanguageMatchIndex(
+      subtitles: _subtitles,
+      locale: locale,
+    );
+    PlvLogger.d('[PlayerController] Best language match index: $index');
+    return index;
   }
 
   /// 确定当前字幕 ID
@@ -537,21 +527,12 @@ class PlayerController extends ChangeNotifier {
     required String? trackKey,
     required int currentIndex,
   }) {
-    // 字幕关闭
-    if (!enabled) return null;
-
-    // 优先使用原生端提供的 trackKey（兼容双语和单语）
-    if (trackKey != null && trackKey.isNotEmpty) {
-      return trackKey;
-    }
-
-    // 降级方案：使用索引查找
-    if (currentIndex >= 0 && currentIndex < _subtitles.length) {
-      return _subtitles[currentIndex].language;
-    }
-
-    // 默认返回 null（字幕关闭或无效状态）
-    return null;
+    return _subtitleSelectionPolicy.determineCurrentSubtitleId(
+      enabled: enabled,
+      trackKey: trackKey,
+      currentIndex: currentIndex,
+      subtitles: _subtitles,
+    );
   }
 
   /// 处理倍速变化（来自原生端的事件回流）
@@ -561,7 +542,7 @@ class PlayerController extends ChangeNotifier {
     final speed = data['speed'] as double?;
     if (speed != null) {
       _updateState(_state.copyWith(playbackSpeed: speed));
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] Playback speed updated from native: $speed',
       );
     }
@@ -610,17 +591,17 @@ class PlayerController extends ChangeNotifier {
   /// [autoPlay] 是否自动播放，默认 true
   Future<void> loadVideo(String vid, {bool autoPlay = true}) async {
     try {
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] loadVideo called with vid: $vid, autoPlay: $autoPlay',
       );
       _updateState(PlayerState.loading(vid));
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] State updated to loading, vid: ${_state.vid}',
       );
 
       // 自动检测离线播放模式
       final isOfflineMode = _checkIsOfflineMode(vid);
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] Offline mode: $isOfflineMode for vid: $vid',
       );
 
@@ -630,14 +611,14 @@ class PlayerController extends ChangeNotifier {
         autoPlay: autoPlay,
         isOfflineMode: isOfflineMode,
       );
-      debugPrint('[PlayerController] Platform channel call completed');
+      PlvLogger.d('[PlayerController] Platform channel call completed');
     } on PlatformException catch (e) {
-      debugPrint(
+      PlvLogger.w(
         '[PlayerController] PlatformException: ${e.message}, code: ${e.code}',
       );
       throw PlayerException.fromPlatformException(e);
     } catch (e) {
-      debugPrint('[PlayerController] Exception: $e');
+      PlvLogger.w('[PlayerController] Exception: $e');
       rethrow;
     }
   }
@@ -647,16 +628,7 @@ class PlayerController extends ChangeNotifier {
   /// 通过 DownloadStateManager 检查视频是否已完成下载。
   /// 如果视频已下载完成，返回 true 表示应该使用离线模式。
   bool _checkIsOfflineMode(String vid) {
-    try {
-      return DownloadStateManager.instance.isCompleted(vid);
-    } catch (e) {
-      // 如果获取下载状态失败（例如单例未正确初始化），
-      // 默认返回 false 使用在线播放
-      debugPrint(
-        '[PlayerController] Error checking offline mode for vid $vid: $e',
-      );
-      return false;
-    }
+    return _offlinePlaybackDecider.shouldUseOfflineMode(vid);
   }
 
   /// 播放
@@ -758,7 +730,7 @@ class PlayerController extends ChangeNotifier {
     String? trackKey,
   }) async {
     try {
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] setSubtitleWithKey called: enabled=$enabled, trackKey=$trackKey',
       );
       await MethodChannelHandler.setSubtitleWithKey(
@@ -769,7 +741,7 @@ class PlayerController extends ChangeNotifier {
       _updateState(
         _state.copyWith(subtitleEnabled: enabled, currentSubtitleId: trackKey),
       );
-      debugPrint(
+      PlvLogger.d(
         '[PlayerController] setSubtitleWithKey completed, state.subtitleEnabled=${_state.subtitleEnabled}, state.currentSubtitleId=${_state.currentSubtitleId}',
       );
       _saveSubtitlePreference(enabled, trackKey);
@@ -816,7 +788,7 @@ class PlayerController extends ChangeNotifier {
       trackKey: trackKey,
       enabled: enabled,
     ).catchError((e) {
-      debugPrint('[PlayerController] Failed to save subtitle preference: $e');
+      PlvLogger.w('[PlayerController] Failed to save subtitle preference: $e');
     });
   }
 
@@ -828,14 +800,16 @@ class PlayerController extends ChangeNotifier {
 
     // 优先尝试释放原生播放器资源（异步，不等待结果）
     MethodChannelHandler.disposePlayer(_methodChannel).catchError((e) {
-      debugPrint(
+      PlvLogger.w(
         '[PlayerController] Error disposing native player during dispose: $e',
       );
     });
 
     // 再尝试停止播放（异步，不等待结果）
     stop().catchError((e) {
-      debugPrint('[PlayerController] Error stopping player during dispose: $e');
+      PlvLogger.w(
+        '[PlayerController] Error stopping player during dispose: $e',
+      );
     });
 
     _eventSubscription?.cancel();

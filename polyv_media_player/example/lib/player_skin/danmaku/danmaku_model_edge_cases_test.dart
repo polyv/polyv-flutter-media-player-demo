@@ -112,7 +112,7 @@ void main() {
           final actualColor = danmaku.color != null
               ? danmaku.color! & 0xFFFFFF
               : null;
-          final expectedColor = entry.value.value & 0xFFFFFF;
+          final expectedColor = entry.value.toARGB32() & 0xFFFFFF;
           expect(
             actualColor,
             expectedColor,
