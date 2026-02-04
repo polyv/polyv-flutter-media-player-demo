@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:polyv_media_player/infrastructure/danmaku/danmaku_model.dart';
 
@@ -58,7 +57,7 @@ void main() {
       const id = 'test_danmaku_2';
       const text = 'Colored danmaku';
       const time = 2000;
-      const color = Color(0xFFFF0000);
+      const color = 0xFFFF0000;
       const type = DanmakuType.top;
 
       // WHEN: 创建包含可选参数的 Danmaku 实例
@@ -97,7 +96,7 @@ void main() {
       expect(danmaku.time, 5000);
       expect(
         danmaku.color,
-        const Color(0xFFFF00FF),
+        0xFFFF00FF,
       ); // 0xFFFF00FF = magenta (alpha=FF, red=00, green=FF, blue=FF)
       expect(danmaku.type, DanmakuType.top);
     });
@@ -123,7 +122,7 @@ void main() {
         id: 'serialize_test',
         text: 'Serialize me',
         time: 3000,
-        color: Color(0xFFFF0000),
+        color: 0xFFFF0000,
         type: DanmakuType.bottom,
       );
 
@@ -165,7 +164,7 @@ void main() {
         id: 'same',
         text: 'Same text',
         time: 1000,
-        color: Color(0xFFFF0000),
+        color: 0xFFFF0000,
         type: DanmakuType.scroll,
       );
 
@@ -173,7 +172,7 @@ void main() {
         id: 'same',
         text: 'Same text',
         time: 1000,
-        color: Color(0xFFFF0000),
+        color: 0xFFFF0000,
         type: DanmakuType.scroll,
       );
 
@@ -205,7 +204,7 @@ void main() {
       final danmaku = Danmaku.fromJson(json);
 
       // THEN: 颜色正确解析
-      expect(danmaku.color, const Color(0xFF000000 | 0xFF00FF));
+      expect(danmaku.color, 0xFF000000 | 0xFF00FF);
     });
 
     test('[P2] should handle invalid color gracefully', () {
@@ -293,7 +292,7 @@ void main() {
         id: 'base_danmaku',
         text: 'Base text',
         time: 3000,
-        color: Color(0xFF00FF00),
+        color: 0xFF00FF00,
         type: DanmakuType.bottom,
       );
       const track = 5;
@@ -310,7 +309,7 @@ void main() {
       expect(activeDanmaku.id, 'base_danmaku');
       expect(activeDanmaku.text, 'Base text');
       expect(activeDanmaku.time, 3000);
-      expect(activeDanmaku.color, const Color(0xFF00FF00));
+      expect(activeDanmaku.color, 0xFF00FF00);
       expect(activeDanmaku.type, DanmakuType.bottom);
       expect(activeDanmaku.track, track);
       expect(activeDanmaku.startTime, startTime);

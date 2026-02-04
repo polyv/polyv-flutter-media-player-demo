@@ -401,7 +401,9 @@ class _LongVideoPageState extends State<LongVideoPage> {
   /// 但在用户首次交互之前，控制条始终隐藏。
   /// 播放结束时，控制条始终隐藏，只显示重播按钮。
   bool get _isControlBarVisible =>
-      !_isEnded && _hasUserInteracted && _controlBarStateMachine.isVisible(_isPlaying);
+      !_isEnded &&
+      _hasUserInteracted &&
+      _controlBarStateMachine.isVisible(_isPlaying);
 
   @override
   void initState() {
@@ -1855,11 +1857,11 @@ class _LongVideoPageState extends State<LongVideoPage> {
   }
 
   /// 解析颜色字符串为 Color 对象
-  Color? _parseColor(String colorStr) {
+  int? _parseColor(String colorStr) {
     if (!colorStr.startsWith('#')) return null;
     try {
       final value = int.parse(colorStr.substring(1), radix: 16);
-      return Color(0xFF000000 | value);
+      return 0xFF000000 | value;
     } catch (_) {
       return null;
     }

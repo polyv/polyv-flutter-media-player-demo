@@ -301,18 +301,8 @@ void main() {
     testWidgets('[P2] danmakus with colors render correctly', (tester) async {
       // GIVEN: Danmakus with different colors
       final danmakus = [
-        const Danmaku(
-          id: '1',
-          text: '红色弹幕',
-          time: 5000,
-          color: Color(0xFFFF6B6B),
-        ),
-        const Danmaku(
-          id: '2',
-          text: '青色弹幕',
-          time: 5000,
-          color: Color(0xFF4ECDC4),
-        ),
+        const Danmaku(id: '1', text: '红色弹幕', time: 5000, color: 0xFFFF6B6B),
+        const Danmaku(id: '2', text: '青色弹幕', time: 5000, color: 0xFF4ECDC4),
         const Danmaku(
           id: '3',
           text: '白色弹幕',

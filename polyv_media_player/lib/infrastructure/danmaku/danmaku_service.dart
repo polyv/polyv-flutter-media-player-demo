@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import '../polyv_api_client.dart';
 import 'danmaku_model.dart';
 
@@ -180,7 +178,7 @@ class MockDanmakuService implements DanmakuService {
     int counter = 0; // 局部计数器，确保同一 VID 生成相同 ID
 
     // 辅助函数：添加一条固定弹幕
-    void addDanmaku(int time, String text, [DanmakuType? type, Color? color]) {
+    void addDanmaku(int time, String text, [DanmakuType? type, int? color]) {
       danmakus.add(
         Danmaku(
           id: '${vid}_$counter',
@@ -197,47 +195,47 @@ class MockDanmakuService implements DanmakuService {
     // 这些弹幕在固定时间点出现，方便测试 seek 功能
 
     // 0-5秒：开场欢迎
-    addDanmaku(500, '我来啦！', null, const Color(0xFFFF6B6B));
-    addDanmaku(1000, '打卡！', null, const Color(0xFF4ECDC4));
+    addDanmaku(500, '我来啦！', null, 0xFFFF6B6B);
+    addDanmaku(1000, '打卡！', null, 0xFF4ECDC4);
     addDanmaku(2000, '前排围观');
     addDanmaku(3000, '期待！');
-    addDanmaku(4000, '老师来了', DanmakuType.top, const Color(0xFFFFE66D));
+    addDanmaku(4000, '老师来了', DanmakuType.top, 0xFFFFE66D);
     addDanmaku(5000, '开始上课了');
 
     // 10秒：第一个知识点
-    addDanmaku(10000, '这个重点！', DanmakuType.top, const Color(0xFFFF6B6B));
+    addDanmaku(10000, '这个重点！', DanmakuType.top, 0xFFFF6B6B);
     addDanmaku(10200, '记下来记下来');
-    addDanmaku(10500, '考试要考', null, const Color(0xFFFFE66D));
+    addDanmaku(10500, '考试要考', null, 0xFFFFE66D);
 
     // 15秒：高能预警
-    addDanmaku(15000, '前方高能！', DanmakuType.top, const Color(0xFFFF6B6B));
-    addDanmaku(15100, '高能预警！', DanmakuType.top, const Color(0xFFFF6B6B));
-    addDanmaku(15200, '注意看！', DanmakuType.top, const Color(0xFFFF6B6B));
+    addDanmaku(15000, '前方高能！', DanmakuType.top, 0xFFFF6B6B);
+    addDanmaku(15100, '高能预警！', DanmakuType.top, 0xFFFF6B6B);
+    addDanmaku(15200, '注意看！', DanmakuType.top, 0xFFFF6B6B);
 
     // 20秒：精彩时刻
     addDanmaku(20000, '哇哦');
-    addDanmaku(20100, '厉害了', null, const Color(0xFF4ECDC4));
+    addDanmaku(20100, '厉害了', null, 0xFF4ECDC4);
     addDanmaku(20300, '学到了');
     addDanmaku(20500, '这个方法好');
 
     // 30秒：中间总结
-    addDanmaku(30000, '到这里为止...', DanmakuType.bottom, const Color(0xFFFFE66D));
-    addDanmaku(30200, '总结一下', DanmakuType.bottom, const Color(0xFFFFE66D));
+    addDanmaku(30000, '到这里为止...', DanmakuType.bottom, 0xFFFFE66D);
+    addDanmaku(30200, '总结一下', DanmakuType.bottom, 0xFFFFE66D);
     addDanmaku(30500, '懂了懂了');
 
     // 40秒：又一个重点
-    addDanmaku(40000, '关键在这里', DanmakuType.top, const Color(0xFFFF6B6B));
+    addDanmaku(40000, '关键在这里', DanmakuType.top, 0xFFFF6B6B);
     addDanmaku(40200, '重点来了');
     addDanmaku(40500, '仔细听');
 
     // 50秒：接近结尾
     addDanmaku(50000, '这就结束了？');
-    addDanmaku(50200, '还没看够', null, const Color(0xFF95E1D3));
+    addDanmaku(50200, '还没看够', null, 0xFF95E1D3);
     addDanmaku(50500, '期待下一期');
 
     // 59秒：结尾
-    addDanmaku(59000, '感谢老师！', DanmakuType.bottom, const Color(0xFFFF6B6B));
-    addDanmaku(59200, '一键三连', DanmakuType.bottom, const Color(0xFFFFE66D));
+    addDanmaku(59000, '感谢老师！', DanmakuType.bottom, 0xFFFF6B6B);
+    addDanmaku(59200, '一键三连', DanmakuType.bottom, 0xFFFFE66D);
     addDanmaku(59500, '已收藏');
     addDanmaku(59800, '下次见', DanmakuType.bottom);
 
@@ -258,13 +256,7 @@ class MockDanmakuService implements DanmakuService {
       '可以',
     ];
 
-    final regularColors = [
-      null,
-      null,
-      null,
-      const Color(0xFF4ECDC4),
-      const Color(0xFF95E1D3),
-    ];
+    final regularColors = [null, null, null, 0xFF4ECDC4, 0xFF95E1D3];
 
     int regularIndex = 0;
     for (int time = 0; time <= 58000; time += 2000) {
@@ -400,7 +392,7 @@ class HttpDanmakuService implements DanmakuService {
     final timeStr = item['time'] as String? ?? '00:00:00';
     final time = PolyvApiClient.timeStrToMilliseconds(timeStr);
 
-    // 解析颜色 (0xRRGGBB -> Color)
+    // 解析颜色 (0xRRGGBB -> ARGB int)
     final colorStr = item['fontColor'] as String? ?? '0xffffff';
     final colorInt = PolyvApiClient.parseColorInt(colorStr);
 
@@ -415,7 +407,7 @@ class HttpDanmakuService implements DanmakuService {
       id: id,
       text: item['msg'] as String? ?? '',
       time: time,
-      color: Color(0xFF000000 | colorInt),
+      color: 0xFF000000 | colorInt,
       type: type,
     );
   }

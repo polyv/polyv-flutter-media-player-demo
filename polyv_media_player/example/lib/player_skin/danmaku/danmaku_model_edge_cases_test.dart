@@ -19,7 +19,7 @@ void main() {
 
         // THEN: Color should be parsed correctly
         expect(danmaku.color, isNotNull);
-        expect(danmaku.color?.toARGB32(), 0xFFFF0000);
+        expect(danmaku.color, 0xFFFF0000);
       });
 
       test('[P1] fromJson handles missing color field', () {
@@ -110,9 +110,9 @@ void main() {
 
           // THEN: Color should match expected value
           final actualColor = danmaku.color != null
-              ? danmaku.color!.toARGB32() & 0xFFFFFF
+              ? danmaku.color! & 0xFFFFFF
               : null;
-          final expectedColor = entry.value.toARGB32() & 0xFFFFFF;
+          final expectedColor = entry.value.value & 0xFFFFFF;
           expect(
             actualColor,
             expectedColor,
@@ -197,7 +197,7 @@ void main() {
           id: '123',
           text: 'Test text',
           time: 5000,
-          color: Color(0xFFFF0000),
+          color: 0xFFFF0000,
           type: DanmakuType.top,
         );
 
@@ -249,7 +249,7 @@ void main() {
           id: '123',
           text: 'Test',
           time: 5000,
-          color: Color(0xFFFF0000),
+          color: 0xFFFF0000,
         );
 
         // WHEN: Copying without any changes
@@ -285,7 +285,7 @@ void main() {
           id: 'original',
           text: 'Original',
           time: 1000,
-          color: Color(0xFFFF0000),
+          color: 0xFFFF0000,
           type: DanmakuType.scroll,
         );
 
@@ -293,7 +293,7 @@ void main() {
         final idModified = danmaku.copyWith(id: 'new_id');
         final textModified = danmaku.copyWith(text: 'New text');
         final timeModified = danmaku.copyWith(time: 9999);
-        final colorModified = danmaku.copyWith(color: const Color(0xFF00FF00));
+        final colorModified = danmaku.copyWith(color: 0xFF00FF00);
         final typeModified = danmaku.copyWith(type: DanmakuType.top);
 
         // THEN: Each modification should only affect the specified field
@@ -306,7 +306,7 @@ void main() {
         expect(timeModified.time, 9999);
         expect(timeModified.id, danmaku.id);
 
-        expect(colorModified.color?.toARGB32(), 0xFF00FF00);
+        expect(colorModified.color, 0xFF00FF00);
         expect(colorModified.id, danmaku.id);
 
         expect(typeModified.type, DanmakuType.top);
@@ -321,13 +321,13 @@ void main() {
           id: '1',
           text: 'Test',
           time: 1000,
-          color: Color(0xFFFF0000),
+          color: 0xFFFF0000,
         );
         const danmaku2 = Danmaku(
           id: '1',
           text: 'Test',
           time: 1000,
-          color: Color(0xFFFF0000),
+          color: 0xFFFF0000,
         );
 
         // THEN: Should be equal
@@ -361,7 +361,7 @@ void main() {
           id: '1',
           text: 'Test',
           time: 1000,
-          color: Color(0xFFFF0000),
+          color: 0xFFFF0000,
           type: DanmakuType.top,
         );
 

@@ -361,7 +361,9 @@ class _DanmakuItemState extends State<_DanmakuItem>
       text: TextSpan(
         text: widget.danmaku.text,
         style: TextStyle(
-          color: widget.danmaku.color ?? Colors.white,
+          color: widget.danmaku.color != null
+              ? Color(widget.danmaku.color!)
+              : Colors.white,
           fontSize: widget.fontSize,
           height: widget.lineHeight / widget.fontSize,
         ),
@@ -453,7 +455,7 @@ class _DanmakuText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 获取弹幕颜色，默认白色
-    final color = danmaku.color ?? Colors.white;
+    final color = danmaku.color != null ? Color(danmaku.color!) : Colors.white;
 
     return Text(
       danmaku.text,

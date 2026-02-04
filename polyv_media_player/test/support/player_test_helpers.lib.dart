@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:polyv_media_player/core/player_state.dart';
 import 'package:polyv_media_player/infrastructure/danmaku/danmaku_model.dart';
@@ -78,7 +77,7 @@ class TestDataFactory {
     String? id,
     String text = 'Test danmaku',
     int time = 0,
-    Color? color,
+    int? color,
     DanmakuType type = DanmakuType.scroll,
   }) {
     return Danmaku(
@@ -108,7 +107,7 @@ class TestDataFactory {
       text: text,
       time: time,
       type: DanmakuType.top,
-      color: const Color(0xFFFF6B6B),
+      color: 0xFFFF6B6B,
     );
   }
 
@@ -121,7 +120,7 @@ class TestDataFactory {
       text: text,
       time: time,
       type: DanmakuType.bottom,
-      color: const Color(0xFFFFE66D),
+      color: 0xFFFFE66D,
     );
   }
 
