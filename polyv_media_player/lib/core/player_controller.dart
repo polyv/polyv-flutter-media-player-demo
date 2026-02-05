@@ -594,9 +594,13 @@ class PlayerController extends ChangeNotifier {
       PlvLogger.d(
         '[PlayerController] loadVideo called with vid: $vid, autoPlay: $autoPlay',
       );
-      _updateState(PlayerState.loading(vid));
+      // 使用 copyWith 保留当前倍速状态，避免切换视频时倍速被重置为 1.0
+      _updateState(_state.copyWith(
+        loadingState: PlayerLoadingState.loading,
+        vid: vid,
+      ));
       PlvLogger.d(
-        '[PlayerController] State updated to loading, vid: ${_state.vid}',
+        '[PlayerController] State updated to loading, vid: ${_state.vid}, speed: ${_state.playbackSpeed}',
       );
 
       // 自动检测离线播放模式
