@@ -61,7 +61,8 @@ class _LongVideoPageState extends State<LongVideoPage> {
   bool _hasUserInteracted = false;
 
   // 弹幕相关状态 - 使用 DanmakuSettings 集中管理
-  final DanmakuService _danmakuService = MockDanmakuService();
+  // 弹幕获取服务 - 延迟初始化，等待配置加载完成
+  DanmakuService? _danmakuService;
 
   // Polyv 配置服务 - 从原生层读取
   final PolyvConfigService _configService = PolyvConfigService();
@@ -145,6 +146,13 @@ class _LongVideoPageState extends State<LongVideoPage> {
         secretKey: config.secretKey,
       );
 
+      // 初始化弹幕获取服务 - 使用真实 API
+      _danmakuService = DanmakuServiceFactory.createHttp(
+        userId: config.userId,
+        readToken: config.readToken,
+        secretKey: config.secretKey,
+      );
+
       PlvLogger.d(
         'LongVideoPage: Services initialized with config from native layer',
       );
@@ -157,6 +165,7 @@ class _LongVideoPageState extends State<LongVideoPage> {
       PlvLogger.w('LongVideoPage: Failed to load config: $e');
       // 降级到 Mock 服务
       _videoListService = VideoListServiceFactory.createMock();
+      _danmakuService = DanmakuServiceFactory.createMock();
       // 即使降级也尝试加载视频列表
       if (mounted) {
         _loadVideoList();
@@ -306,8 +315,14 @@ class _LongVideoPageState extends State<LongVideoPage> {
 
   /// 加载弹幕数据
   Future<void> _loadDanmakus(String vid) async {
+    final service = _danmakuService;
+    if (service == null) {
+      PlvLogger.w('弹幕服务未初始化');
+      return;
+    }
+
     try {
-      final danmakus = await _danmakuService.fetchDanmakus(vid);
+      final danmakus = await service.fetchDanmakus(vid);
       if (mounted) {
         setState(() {
           _danmakus = danmakus;
