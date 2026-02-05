@@ -61,6 +61,14 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
   /// 是否已经初始化（首次 build 时触发弹幕更新）
   bool _isInitialized = false;
 
+  /// GlobalKey 列表，用于控制子 Widget 的动画
+  ///
+  /// 与 _activeDanmakus 一一对应
+  final List<GlobalKey<_DanmakuItemState>> _danmakuKeys = [];
+
+  /// 弹幕是否刚刚被重新开启（用于判断是否重置动画）
+  bool _justReopened = false;
+
   /// 弹幕时间窗口（毫秒）
   /// 当前时间前后 1 秒内的弹幕都会被显示（与 iOS 端保持一致）
   static const int _timeWindow = 1000;
@@ -82,15 +90,69 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
     DanmakuFontSize.large: 24.0,
   };
 
+  /// 清理过期的弹幕
+  ///
+  /// 移除动画完成或超出时间窗口的弹幕
+  void _removeExpiredDanmakus() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final toKeep = <(ActiveDanmaku, GlobalKey<_DanmakuItemState>)>[];
+
+    for (int i = 0; i < _activeDanmakus.length; i++) {
+      final ad = _activeDanmakus[i];
+      final animationExpired = (now - ad.startTime) >= _animationDuration;
+      if (!animationExpired) {
+        toKeep.add((ad, _danmakuKeys[i]));
+      }
+    }
+
+    if (toKeep.length < _activeDanmakus.length) {
+      setState(() {
+        _activeDanmakus.clear();
+        _danmakuKeys.clear();
+        for (final (danmaku, key) in toKeep) {
+          _activeDanmakus.add(danmaku);
+          _danmakuKeys.add(key);
+        }
+      });
+    }
+  }
+
   @override
   void didUpdateWidget(DanmakuLayer oldWidget) {
     super.didUpdateWidget(oldWidget);
 
+    // 检测弹幕开关状态变化
+    bool shouldUpdateAfterToggle = false;
+    bool isSeekOnToggle = false;
+
+    if (oldWidget.enabled != widget.enabled) {
+      // 处理弹幕开关变化
+      if (widget.enabled) {
+        // 弹幕开启：清空状态，重新加载弹幕（从右侧重新开始）
+        _activeDanmakus.clear();
+        _danmakuKeys.clear();
+        for (int i = 0; i < _trackEndTime.length; i++) {
+          _trackEndTime[i] = 0;
+        }
+        _lastCurrentTime = -1; // 重置，让 _updateActiveDanmakus 当作首次更新
+        _justReopened = true; // 标记刚刚重新开启，动画从头开始
+        setState(() {
+          // 触发 rebuild
+        });
+        // 标记需要更新弹幕列表
+        shouldUpdateAfterToggle = true;
+        isSeekOnToggle = true;
+      }
+      // 弹幕关闭：不渲染（在 build 方法中处理），保留状态但不清空
+      // 这样下次开启时可以重新加载
+    }
+
     // 当 currentTime 变化时，更新活跃弹幕列表
+    // 或者在弹幕开启时也需要更新
     if (oldWidget.currentTime != widget.currentTime ||
-        oldWidget.enabled != widget.enabled ||
-        oldWidget.danmakus != widget.danmakus) {
-      _updateActiveDanmakus();
+        oldWidget.danmakus != widget.danmakus ||
+        shouldUpdateAfterToggle) {
+      _updateActiveDanmakus(isAfterSeekToggle: isSeekOnToggle);
     }
   }
 
@@ -102,15 +164,15 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
   /// 3. 防止重复：只添加不在活跃列表中的弹幕
   /// 4. 弹幕持续滚动直到动画完成（8秒）
   /// 5. 分配到最空闲的轨道
-  void _updateActiveDanmakus() {
+  ///
+  /// 注意：弹幕开关状态变化由 didUpdateWidget 直接处理，不在此方法内
+  ///
+  /// [isAfterSeekToggle] 表示是否在弹幕开启时检测到 seek
+  void _updateActiveDanmakus({bool isAfterSeekToggle = false}) {
+    // 弹幕关闭时只清理过期弹幕，不清空状态
+    // （动画暂停由 didUpdateWidget 处理）
     if (!widget.enabled) {
-      // 弹幕关闭时清空活跃弹幕
-      if (_activeDanmakus.isNotEmpty) {
-        setState(() {
-          _activeDanmakus.clear();
-          _lastCurrentTime = -1;
-        });
-      }
+      _removeExpiredDanmakus();
       return;
     }
 
@@ -118,20 +180,24 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
     final currentTime = widget.currentTime;
 
     // 检测 seek 操作：如果时间发生跳跃（向后或向前大跳跃），清空活跃弹幕
-    final isSeekingBackwards =
-        _lastCurrentTime >= 0 && currentTime < _lastCurrentTime;
-    final isSeekingForwards =
-        _lastCurrentTime >= 0 &&
-        currentTime > _lastCurrentTime + 2000; // 超过 2 秒认为是 seek
+    // 注意：如果是从弹幕开启时的 seek 跳转过来，跳过 seek 检测（因为已经处理过了）
+    if (!isAfterSeekToggle) {
+      final isSeekingBackwards =
+          _lastCurrentTime >= 0 && currentTime < _lastCurrentTime;
+      final isSeekingForwards =
+          _lastCurrentTime >= 0 &&
+          currentTime > _lastCurrentTime + 2000; // 超过 2 秒认为是 seek
 
-    if (isSeekingBackwards || isSeekingForwards) {
-      // Seek 操作：清空活跃弹幕和轨道状态
-      setState(() {
-        _activeDanmakus.clear();
-        for (int i = 0; i < _trackEndTime.length; i++) {
-          _trackEndTime[i] = 0;
-        }
-      });
+      if (isSeekingBackwards || isSeekingForwards) {
+        // Seek 操作：清空活跃弹幕、GlobalKey 列表和轨道状态
+        setState(() {
+          _activeDanmakus.clear();
+          _danmakuKeys.clear();
+          for (int i = 0; i < _trackEndTime.length; i++) {
+            _trackEndTime[i] = 0;
+          }
+        });
+      }
     }
     // 记录是否为本次 DanmakuLayer 生命周期内的首次更新
     final bool isInitialUpdate = _lastCurrentTime < 0;
@@ -141,10 +207,11 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
     final activeIds = _activeDanmakus.map((ad) => ad.id).toSet();
 
     // 1. 找到应该触发/显示的弹幕
-    // 常规情况下：使用 _timeWindow 仅触发“刚到时间”的新弹幕
+    // 常规情况下：使用 _timeWindow 仅触发"刚到时间"的新弹幕
     // 首次更新（例如横竖屏切换导致 DanmakuLayer 重新创建时）：
     //   使用完整动画窗口 [time, time + _animationDuration] 重新构建当前仍在屏幕上的弹幕，
     //   确保正在滚动中的弹幕在横竖屏切换后继续从正确位置滚动。
+
     final shouldTriggerDanmakus = widget.danmakus.where((d) {
       if (isInitialUpdate) {
         final int start = d.time;
@@ -185,13 +252,13 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
 
       // 创建活跃弹幕
       int startTime;
-      if (isInitialUpdate) {
-        // 对于首次更新（如横竖屏切换），根据当前播放时间推导一个“虚拟开始时间”，
+      if (isInitialUpdate && !_justReopened) {
+        // 对于首次更新（如横竖屏切换），根据当前播放时间推导一个"虚拟开始时间"，
         // 使得动画已进行的时间约等于 currentTime - d.time，从而保证弹幕位置连续。
         final int elapsedSinceAppear = currentTime - d.time;
         startTime = now - elapsedSinceAppear;
       } else {
-        // 常规情况下，从当前时间开始动画（保持原有行为）
+        // 常规情况下（包括弹幕重新开启），从当前时间开始动画，从头开始
         startTime = now;
       }
 
@@ -201,25 +268,35 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
     }
 
     // 3. 找出需要移除的弹幕（只在动画完成时移除）
-    final toRemove = <ActiveDanmaku>[];
-    for (final ad in _activeDanmakus) {
+    final toKeep = <(ActiveDanmaku, GlobalKey<_DanmakuItemState>)>[];
+    for (int i = 0; i < _activeDanmakus.length; i++) {
+      final ad = _activeDanmakus[i];
       final animationExpired = (now - ad.startTime) >= _animationDuration;
-      if (animationExpired) {
-        toRemove.add(ad);
+      if (!animationExpired) {
+        toKeep.add((ad, _danmakuKeys[i]));
       }
     }
 
     // 4. 应用更新
-    if (toAdd.isNotEmpty || toRemove.isNotEmpty) {
+    if (toAdd.isNotEmpty || toKeep.length < _activeDanmakus.length) {
       setState(() {
-        // 移除动画完成的弹幕
-        for (final d in toRemove) {
-          _activeDanmakus.remove(d);
+        // 保留未过期的弹幕及其对应的 GlobalKey
+        _activeDanmakus.clear();
+        _danmakuKeys.clear();
+        for (final (danmaku, key) in toKeep) {
+          _activeDanmakus.add(danmaku);
+          _danmakuKeys.add(key);
         }
-        // 添加新触发的弹幕
-        _activeDanmakus.addAll(toAdd);
+        // 添加新触发的弹幕，每个弹幕需要一个 GlobalKey
+        for (final danmaku in toAdd) {
+          _activeDanmakus.add(danmaku);
+          _danmakuKeys.add(GlobalKey<_DanmakuItemState>());
+        }
       });
     }
+
+    // 重置重新开启标志
+    _justReopened = false;
   }
 
   @override
@@ -259,10 +336,12 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
                   clipBehavior: Clip.none,
                   children: [
                     // 渲染所有活跃弹幕
-                    for (final danmaku in _activeDanmakus)
+                    for (int i = 0; i < _activeDanmakus.length; i++)
                       _DanmakuItem(
-                        key: ValueKey('${danmaku.id}_${danmaku.startTime}'),
-                        danmaku: danmaku,
+                        key: i < _danmakuKeys.length
+                            ? _danmakuKeys[i]
+                            : ValueKey(_activeDanmakus[i].id),
+                        danmaku: _activeDanmakus[i],
                         fontSize: fontSize,
                         lineHeight: lineHeight,
                         availableHeight: availableHeight,
@@ -280,6 +359,7 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
   @override
   void dispose() {
     _activeDanmakus.clear();
+    _danmakuKeys.clear();
     super.dispose();
   }
 }
@@ -348,6 +428,8 @@ class _DanmakuItemState extends State<_DanmakuItem>
       _controller!.forward();
     } else {
       // 从头开始，弹幕从屏幕右侧完全滑入
+      // AnimationController.value = 0.0 时，Tween 的 begin (1.0) 被使用
+      // 这使得弹幕从右侧 (left = screenWidth) 开始
       _controller!.forward(from: 0.0);
     }
   }

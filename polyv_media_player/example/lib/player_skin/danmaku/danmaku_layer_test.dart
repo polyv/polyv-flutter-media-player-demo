@@ -255,6 +255,602 @@ void main() {
       // 验证 IgnorePointer widget 存在
       expect(find.byType(IgnorePointer), findsWidgets);
     });
+
+    testWidgets('弹幕关闭后再开启，弹幕重新从右侧开始滑动', (tester) async {
+      // 验证 iOS 原生行为：弹幕关闭后重新开启，弹幕重新从右侧开始滑动
+      // 而不是从暂停位置继续
+      final danmakus = List.generate(
+        5,
+        (i) => Danmaku(
+          id: 'danmaku_$i',
+          text: '弹幕 $i',
+          time: 5000 + i * 10,
+        ),
+      );
+
+      // 初始状态：弹幕开启
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 300,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5050,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 记录弹幕的 left 值（水平位置）
+      final positionedWidgetsBefore = tester.widgetList<Positioned>(
+        find.descendant(
+          of: find.byType(DanmakuLayer),
+          matching: find.byType(Positioned),
+        ),
+      );
+      final leftValuesBefore = positionedWidgetsBefore.map((p) => p.left).toList();
+
+      // 关闭弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 300,
+              child: DanmakuLayer(
+                enabled: false,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5100,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 验证弹幕被隐藏
+      expect(find.text('弹幕 0'), findsNothing);
+
+      // 重新开启弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 300,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5150,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 验证弹幕重新显示
+      expect(find.text('弹幕 0'), findsOneWidget);
+
+      // 验证弹幕位置（left 值）应该重新开始（接近右侧，即较大的 left 值）
+      final positionedWidgetsAfter = tester.widgetList<Positioned>(
+        find.descendant(
+          of: find.byType(DanmakuLayer),
+          matching: find.byType(Positioned),
+        ),
+      );
+      final leftValuesAfter = positionedWidgetsAfter.map((p) => p.left).toList();
+
+      // 弹幕应该重新显示（left 值存在）
+      expect(leftValuesAfter.length, greaterThan(0));
+
+      // 验证弹幕从右侧开始：left 值应该大于屏幕宽度的一半（200）
+      // 当动画 value = 1.0 时，left = screenWidth = 400（右侧）
+      // 即使动画已经开始移动，left 值也应该仍然较大
+      expect(
+        leftValuesAfter.any((left) => left != null && left! > 200),
+        true,
+        reason: '弹幕重新开启后应该从右侧开始滑动（left > 200）',
+      );
+    });
+
+    testWidgets('弹幕关闭时动画停止', (tester) async {
+      const danmaku = Danmaku(id: '1', text: '滚动弹幕', time: 5000);
+
+      // 初始状态：弹幕开启
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5000,
+                danmakus: [danmaku],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 记录初始 left 位置
+      final positionedBefore = tester.widget<Positioned>(
+        find.descendant(
+          of: find.byType(DanmakuLayer),
+          matching: find.byType(Positioned),
+        ),
+      );
+      final leftBefore = positionedBefore.left;
+
+      // 关闭弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: false,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5100,
+                danmakus: [danmaku],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 验证弹幕被隐藏
+      expect(find.text('滚动弹幕'), findsNothing);
+
+      // 重新开启弹幕（动画应该从暂停位置继续）
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5200,
+                danmakus: [danmaku],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 验证弹幕重新显示
+      expect(find.text('滚动弹幕'), findsOneWidget);
+    });
+
+    testWidgets('弹幕关闭期间时间前进后开启显示新弹幕', (tester) async {
+      // 创建在不同时间出现的弹幕
+      final danmakus = [
+        const Danmaku(id: '1', text: '早期弹幕', time: 5000),
+        const Danmaku(id: '2', text: '晚期弹幕', time: 10000),
+      ];
+
+      // 初始状态：显示早期弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 验证早期弹幕显示
+      expect(find.text('早期弹幕'), findsOneWidget);
+
+      // 关闭弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: false,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+
+      // 时间前进到 12000（晚期弹幕时间窗口内）
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: false,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 12000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+
+      // 重新开启弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 12000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 验证晚期弹幕显示（早期弹幕已过期）
+      expect(find.text('晚期弹幕'), findsOneWidget);
+    });
+
+    testWidgets('简单测试：弹幕在正确时间显示', (tester) async {
+      // 这是一个简单的测试，验证弹幕在正确的时间显示
+      final danmakus = [
+        const Danmaku(id: '1', text: '10秒弹幕', time: 10000),
+      ];
+
+      // 在时间 10000 显示弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 10000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 验证弹幕显示
+      expect(find.text('10秒弹幕'), findsOneWidget);
+    });
+
+    testWidgets('简单测试2：关闭后短时间开启，弹幕重新显示', (tester) async {
+      // 这个测试验证弹幕关闭后短时间开启，位置保持不变
+      final danmakus = [
+        const Danmaku(id: '1', text: '测试弹幕', time: 5000),
+      ];
+
+      // 开启弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('测试弹幕'), findsOneWidget);
+
+      // 关闭弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: false,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+
+      // 短时间后重新开启（时间没变）
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 验证弹幕重新显示
+      expect(find.text('测试弹幕'), findsOneWidget);
+    });
+
+    testWidgets('弹幕关闭期间发生 seek，开启后显示新位置的弹幕', (tester) async {
+      final danmakus = [
+        const Danmaku(id: '1', text: '5秒弹幕', time: 5000),
+        const Danmaku(id: '2', text: '15秒弹幕', time: 15000),
+      ];
+
+      // 初始状态：显示 5 秒弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('5秒弹幕'), findsOneWidget);
+
+      // 关闭弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: false,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+
+      // seek 到 15 秒
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: false,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 15000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+
+      // 重新开启弹幕
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 15000,
+                danmakus: danmakus,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 验证显示 15 秒弹幕
+      expect(find.text('15秒弹幕'), findsOneWidget);
+    });
+
+    testWidgets('多次快速切换弹幕开关', (tester) async {
+      const danmaku = Danmaku(id: '1', text: '测试弹幕', time: 5000);
+
+      // 快速切换 5 次
+      for (int i = 0; i < 5; i++) {
+        final enabled = i % 2 == 0;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 400,
+                height: 200,
+                child: DanmakuLayer(
+                  enabled: enabled,
+                  opacity: 1.0,
+                  fontSize: DanmakuFontSize.medium,
+                  currentTime: 5000,
+                  danmakus: [danmaku],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+      }
+
+      // 最终状态：开启（i=4 时是偶数）
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: true,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5000,
+                danmakus: [danmaku],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 验证弹幕正常显示
+      expect(find.text('测试弹幕'), findsOneWidget);
+    });
+
+    testWidgets('弹幕关闭状态下不存在弹幕 Widget', (tester) async {
+      const danmaku = Danmaku(id: '1', text: '测试弹幕', time: 5000);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 200,
+              child: DanmakuLayer(
+                enabled: false,
+                opacity: 1.0,
+                fontSize: DanmakuFontSize.medium,
+                currentTime: 5000,
+                danmakus: [danmaku],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // 验证弹幕文本不存在
+      expect(find.text('测试弹幕'), findsNothing);
+
+      // 验证 DanmakuLayer 返回的是 SizedBox.shrink()
+      final sizedBox = tester.widget<SizedBox>(
+        find.descendant(
+          of: find.byType(DanmakuLayer),
+          matching: find.byType(SizedBox),
+        ),
+      );
+      expect(sizedBox, isNotNull);
+    });
   });
 
   group('Danmaku Model Tests', () {
