@@ -215,8 +215,11 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
 
     final shouldTriggerDanmakus = widget.danmakus.where((d) {
       if (_justReopened) {
-        // 弹幕重新开启：只显示当前播放时间之后的弹幕
-        return d.time >= currentTime && d.time <= currentTime + _timeWindow;
+        // 弹幕重新开启：显示当前播放时间附近的弹幕
+        // 使用一个较大的时间窗口（2秒），确保弹幕能够重新显示
+        const reopenWindow = 2000;
+        return d.time >= currentTime - reopenWindow &&
+               d.time <= currentTime + _timeWindow;
       } else if (isInitialUpdate) {
         final int start = d.time;
         final int end = d.time + _animationDuration;
