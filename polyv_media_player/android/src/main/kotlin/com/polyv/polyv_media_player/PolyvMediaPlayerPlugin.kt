@@ -345,46 +345,62 @@ class PolyvMediaPlayerPlugin :
     }
 
     /// 离线播放视频
+    ///
+    /// 修复：无网络情况下播放已下载视频
+    /// 1. 从 PLVMediaDownloaderManager 获取已下载的 downloader
+    /// 2. 使用 downloader 的 mediaResource（包含已缓存的元数据）
+    /// 3. 避免创建新的 PLVMediaResource.vod() 导致的网络请求
     private fun loadVideoOffline(vid: String, autoPlay: Boolean, appCtx: Context, result: Result) {
-        // 获取账号配置（离线播放也需要配置来获取视频元数据）
-        val config = try {
-            getConfigOrThrow()
-        } catch (e: IllegalStateException) {
-            result.error(errorCodeNotInitialized, e.message, null)
-            return
-        }
-        val userId = config.first
-        val secretKey = config.second
-        val readToken = injectedReadToken
-        val writeToken = injectedWriteToken
+        android.util.Log.d("PolyvMediaPlayerPlugin", "========== loadVideoOffline called ==========")
+        android.util.Log.d("PolyvMediaPlayerPlugin", "VID: $vid")
 
-        // 获取下载目录
-        val downloadRoots = listOfNotNull(
-            appCtx.getExternalFilesDir(null)?.absolutePath
-        )
-
-        android.util.Log.d("PolyvMediaPlayerPlugin", "Download roots for offline playback: $downloadRoots")
-
-        if (downloadRoots.isEmpty()) {
-            android.util.Log.e("PolyvMediaPlayerPlugin", "Download directory not found")
-            sendErrorEvent("OFFLINE_ERROR", "Download directory not found")
-            sendStateChangeEvent(stateError)
-            result.error("OFFLINE_ERROR", "Download directory not available", null)
-            return
+        // Step 1: 尝试从下载管理器获取已下载的 downloader
+        // downloader 的 mediaResource 包含下载时获取的视频元数据
+        val downloaderList = PLVMediaDownloaderManager.downloaderList.value ?: emptyList()
+        val downloader = downloaderList.find { dl ->
+            val mr = dl.mediaResource
+            mr is PLVVodMediaResource && mr.videoId == vid
         }
 
-        val viewerParam = PLVViewerParam(
-            "viewer",
-            "viewer",
-            null, null, null, null,
-            null, null, null
-        )
+        val mediaResource = if (downloader != null) {
+            android.util.Log.d("PolyvMediaPlayerPlugin", "Found downloader for vid: $vid, using cached mediaResource")
+            // 使用下载器的 mediaResource，包含已缓存的元数据
+            downloader.mediaResource
+        } else {
+            android.util.Log.w("PolyvMediaPlayerPlugin", "Downloader not found for vid: $vid, creating new mediaResource")
+            // 降级：如果没有找到下载器，创建新的 mediaResource（可能需要网络）
+            val downloadRoots = listOfNotNull(appCtx.getExternalFilesDir(null)?.absolutePath)
 
-        val authentication = PLVVodMainAccountAuthentication(userId, secretKey, readToken, writeToken)
+            if (downloadRoots.isEmpty()) {
+                android.util.Log.e("PolyvMediaPlayerPlugin", "Download directory not found")
+                sendErrorEvent("OFFLINE_ERROR", "Download directory not found")
+                sendStateChangeEvent(stateError)
+                result.error("OFFLINE_ERROR", "Download directory not available", null)
+                return
+            }
 
-        // 创建媒体资源，传入本地路径实现离线播放
-        // 关键：downloadRoots 参数让 SDK 优先从本地加载
-        val mediaResource = PLVMediaResource.vod(vid, authentication, viewerParam, downloadRoots)
+            val config = try {
+                getConfigOrThrow()
+            } catch (e: IllegalStateException) {
+                result.error(errorCodeNotInitialized, e.message, null)
+                return
+            }
+
+            val authentication = PLVVodMainAccountAuthentication(
+                config.first,
+                config.second,
+                injectedReadToken,
+                injectedWriteToken
+            )
+            val viewerParam = PLVViewerParam(
+                "viewer",
+                "viewer",
+                null, null, null, null,
+                null, null, null
+            )
+
+            PLVMediaResource.vod(vid, authentication, viewerParam, downloadRoots)
+        }
 
         val plvPlayer = try {
             ensurePlayer()

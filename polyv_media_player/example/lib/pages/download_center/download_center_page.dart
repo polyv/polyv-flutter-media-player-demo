@@ -355,7 +355,7 @@ class CompletedTabView extends StatelessWidget {
             final task = tasks[index];
             return _CompletedTaskItem(
               task: task,
-              onTap: () => _playDownloadedVideo(context, task.vid),
+              onTap: () => _playDownloadedVideo(context, task),
             );
           },
         );
@@ -364,10 +364,15 @@ class CompletedTabView extends StatelessWidget {
   }
 
   /// 播放已下载的视频
-  void _playDownloadedVideo(BuildContext context, String vid) {
+  void _playDownloadedVideo(BuildContext context, DownloadTask task) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => LongVideoPage(initialVid: vid)),
+      MaterialPageRoute(builder: (context) => LongVideoPage(
+        initialVid: task.vid,
+        isOfflineMode: true,  // 标记为离线播放模式，跳过网络列表加载
+        initialTitle: task.title,
+        initialThumbnail: task.thumbnail,
+      )),
     );
   }
 

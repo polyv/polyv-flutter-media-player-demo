@@ -11,6 +11,11 @@ void main() async {
   // 如果配置无效，将 fallback 到 Info.plist/AndroidManifest（已废弃）
   await AppConfig.inject();
 
+  // 初始化下载状态管理器并同步下载列表
+  // 这样 PlayerController 的离线播放检测才能正常工作
+  final downloadManager = DownloadStateManager.instance;
+  await downloadManager.syncFromNative();
+
   runApp(const MyApp());
 }
 
@@ -20,7 +25,8 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (_) => DownloadStateManager(),
+      // 使用单例实例，确保 PlayerController 和 UI 使用同一个 DownloadStateManager
+      create: (_) => DownloadStateManager.instance,
       child: MaterialApp(
         title: 'Polyv Media Player Demo',
         theme: ThemeData(

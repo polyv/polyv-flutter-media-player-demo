@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:polyv_media_player/infrastructure/video_list/video_list_models.dart';
 import 'video_list_style.dart';
@@ -121,6 +122,37 @@ class VideoListItem extends StatelessWidget {
       return _buildPlaceholder();
     }
 
+    // 解析 URL 以确定加载方式
+    final uri = Uri.tryParse(thumbnailUrl);
+    final scheme = uri?.scheme;
+
+    // 本地文件 URL (file://)
+    if (scheme == 'file') {
+      return Image.file(
+        File.fromUri(uri!),
+        width: 112,
+        height: 64,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return _buildPlaceholder();
+        },
+      );
+    }
+
+    // 绝对路径（以 / 开头）
+    if (thumbnailUrl.startsWith('/')) {
+      return Image.file(
+        File(thumbnailUrl),
+        width: 112,
+        height: 64,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return _buildPlaceholder();
+        },
+      );
+    }
+
+    // 网络 URL (http:// 或 https://)
     return Image.network(
       thumbnailUrl,
       width: 112,

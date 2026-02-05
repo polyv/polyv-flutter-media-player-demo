@@ -410,9 +410,15 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 }
 
 /// 离线播放视频
+///
+/// 修复：无网络情况下播放已下载视频
+/// 1. 从 PLVDownloadInfo 获取视频元数据（不依赖网络）
+/// 2. 使用本地视频文件播放
+/// 3. 网络请求失败不影响播放
 - (void)loadVideoOffline:(NSString *)vid result:(FlutterResult)result {
     NSString *downloadDir = [self.playerSession downloadDir];
-    NSLog(@"[PolyvPlugin] Download directory: %@", downloadDir);
+    NSLog(@"[PolyvPlugin] ========== loadVideoOffline called ==========");
+    NSLog(@"[PolyvPlugin] VID: %@, Download directory: %@", vid, downloadDir);
 
     if (!downloadDir || downloadDir.length == 0) {
         NSLog(@"[PolyvPlugin] ERROR: Download directory not found");
@@ -424,12 +430,39 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         return;
     }
 
+    // Step 1: 从下载管理器获取下载信息（包含视频元数据）
+    // 这样可以在无网络时获取清晰度、字幕等信息
+    PLVDownloadInfo *downloadInfo = [[PLVDownloadMediaManager sharedManager] getDownloadInfo:vid fileType:PLVDownloadFileTypeVideo];
+    BOOL hasMetadataFromDownload = NO;
+
+    if (downloadInfo && downloadInfo.video) {
+        NSLog(@"[PolyvPlugin] Found download info with video metadata for vid: %@", vid);
+        self.currentVideo = downloadInfo.video;
+
+        NSInteger savedQualityIndex = [self.playerSession lastSelectedQualityIndex];
+        if (savedQualityIndex > 0) {
+            self.currentQualityIndex = savedQualityIndex;
+            NSLog(@"[PolyvPlugin] Restored quality index from playerSession (offline): %ld", (long)savedQualityIndex);
+        } else {
+            self.currentQualityIndex = 2;
+        }
+
+        [self sendQualityDataForVideo:self.currentVideo];
+        [self setupSubtitleModuleIfNeededForVideo:self.currentVideo];
+        hasMetadataFromDownload = YES;
+        NSLog(@"[PolyvPlugin] Metadata loaded from download info, playback can proceed without network");
+    } else {
+        NSLog(@"[PolyvPlugin] Warning: Download info or video metadata not found, will try network request");
+    }
+
     dispatch_async(dispatch_get_main_queue(), ^{
+        // Step 2: 设置显示视图
         if (self.videoViewController) {
             NSLog(@"[PolyvPlugin] Setting up display superview for offline playback");
             [self.playerSession setupDisplaySuperview:self.videoViewController.containerView coreDelegate:self vodDelegate:self];
         }
 
+        // Step 3: 创建本地视频对象
         PLVLocalVideo *localVideo = [self.playerSession localVideoWithVid:vid downloadDir:downloadDir];
         if (!localVideo) {
             NSLog(@"[PolyvPlugin] ERROR: Failed to create local video for vid: %@", vid);
@@ -441,6 +474,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
             return;
         }
 
+        // Step 4: 设置播放器使用本地视频
         [self.playerSession preparePlayerWithVideo:localVideo
                                   displaySuperview:(self.videoViewController ? self.videoViewController.containerView : nil)
                                     applyLocalPrior:YES
@@ -452,29 +486,59 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         NSLog(@"[PolyvPlugin] Local video loaded, playbackState: %ld", (long)self.player.playbackState);
         NSLog(@"[PolyvPlugin] Position reset to 0");
 
-        void (^offlineMetadataCompletion)(PLVVodMediaVideo *video, NSError *error) = ^(PLVVodMediaVideo *video, NSError *error) {
-            dispatch_async(dispatch_get_main_queue(), ^{
+        // Step 5: 如果已有元数据，立即返回成功
+        // 这样即使无网络，Flutter 层也能收到响应并继续播放
+        if (hasMetadataFromDownload) {
+            NSLog(@"[PolyvPlugin] Offline playback ready (using cached metadata)");
+            result(nil);
+
+            // Step 6: 可选：后台尝试获取最新元数据（不阻塞播放）
+            // 这样可以在有网络时更新元数据，但无网络时也能播放
+            [self.playerSession requestVideoWithVid:vid completion:^(PLVVodMediaVideo *video, NSError *error) {
                 if (video && !error) {
-                    self.currentVideo = video;
-
-                    NSInteger savedQualityIndex = [self.playerSession lastSelectedQualityIndex];
-                    if (savedQualityIndex > 0) {
-                        self.currentQualityIndex = savedQualityIndex;
-                        NSLog(@"[PolyvPlugin] Restored quality index from playerSession (offline): %ld", (long)savedQualityIndex);
-                    } else {
-                        self.currentQualityIndex = 2;
-                    }
-
-                    [self sendQualityDataForVideo:video];
-                    [self setupSubtitleModuleIfNeededForVideo:video];
+                    NSLog(@"[PolyvPlugin] Updated video metadata from network");
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        self.currentVideo = video;
+                        [self sendQualityDataForVideo:video];
+                        [self setupSubtitleModuleIfNeededForVideo:video];
+                    });
                 } else {
-                    NSLog(@"[PolyvPlugin] Warning: Could not fetch video metadata for offline playback");
+                    NSLog(@"[PolyvPlugin] Network request for metadata failed (expected in offline mode): %@", error?.localizedDescription);
                 }
-                result(nil);
-            });
-        };
+            }];
+        } else {
+            // Step 7: 如果没有下载元数据，必须等待网络请求
+            // 这种情况下无网络将无法播放（降级行为）
+            NSLog(@"[PolyvPlugin] No cached metadata, waiting for network request...");
+            void (^offlineMetadataCompletion)(PLVVodMediaVideo *video, NSError *error) = ^(PLVVodMediaVideo *video, NSError *error) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (video && !error) {
+                        self.currentVideo = video;
 
-        [self.playerSession requestVideoWithVid:vid completion:offlineMetadataCompletion];
+                        NSInteger savedQualityIndex = [self.playerSession lastSelectedQualityIndex];
+                        if (savedQualityIndex > 0) {
+                            self.currentQualityIndex = savedQualityIndex;
+                            NSLog(@"[PolyvPlugin] Restored quality index from playerSession (offline): %ld", (long)savedQualityIndex);
+                        } else {
+                            self.currentQualityIndex = 2;
+                        }
+
+                        [self sendQualityDataForVideo:video];
+                        [self setupSubtitleModuleIfNeededForVideo:video];
+                        result(nil);
+                    } else {
+                        NSLog(@"[PolyvPlugin] ERROR: Could not fetch video metadata for offline playback");
+                        [self sendErrorEventWithCode:@"OFFLINE_ERROR" message:@"Video metadata not available"];
+                        [self sendStateChangeEvent:kStateError];
+                        result([FlutterError errorWithCode:@"OFFLINE_ERROR"
+                                                    message:@"Video metadata not available, please connect to network first"
+                                                    details:nil]);
+                    }
+                });
+            };
+
+            [self.playerSession requestVideoWithVid:vid completion:offlineMetadataCompletion];
+        }
     });
 }
 

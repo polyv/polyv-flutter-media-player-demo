@@ -20,8 +20,20 @@ import 'package:polyv_media_player/utils/plv_logger.dart';
 class LongVideoPage extends StatefulWidget {
   /// 初始视频 VID - 用于从下载中心点击播放时直接加载指定视频
   final String? initialVid;
+  /// 是否为离线播放模式 - 跳过网络列表加载，直接播放指定视频
+  final bool isOfflineMode;
+  /// 离线播放时的初始标题（从下载任务获取）
+  final String? initialTitle;
+  /// 离线播放时的初始缩略图（从下载任务获取）
+  final String? initialThumbnail;
 
-  const LongVideoPage({super.key, this.initialVid});
+  const LongVideoPage({
+    super.key,
+    this.initialVid,
+    this.isOfflineMode = false,
+    this.initialTitle,
+    this.initialThumbnail,
+  });
 
   @override
   State<LongVideoPage> createState() => _LongVideoPageState();
@@ -157,18 +169,31 @@ class _LongVideoPageState extends State<LongVideoPage> {
         'LongVideoPage: Services initialized with config from native layer',
       );
 
-      // 配置加载成功后，加载视频列表
-      if (mounted) {
-        _loadVideoList();
+      // 离线模式：直接播放指定视频，跳过网络列表加载
+      if (widget.isOfflineMode && widget.initialVid != null && widget.initialVid!.isNotEmpty) {
+        PlvLogger.d('LongVideoPage: Offline mode, loading video directly: ${widget.initialVid}');
+        _loadOfflineVideo(widget.initialVid!);
+      } else {
+        // 在线模式：加载视频列表
+        if (mounted) {
+          _loadVideoList();
+        }
       }
     } catch (e) {
       PlvLogger.w('LongVideoPage: Failed to load config: $e');
       // 降级到 Mock 服务
       _videoListService = VideoListServiceFactory.createMock();
       _danmakuService = DanmakuServiceFactory.createMock();
-      // 即使降级也尝试加载视频列表
-      if (mounted) {
-        _loadVideoList();
+
+      // 离线模式：直接播放指定视频
+      if (widget.isOfflineMode && widget.initialVid != null && widget.initialVid!.isNotEmpty) {
+        PlvLogger.d('LongVideoPage: Offline mode (fallback), loading video directly: ${widget.initialVid}');
+        _loadOfflineVideo(widget.initialVid!);
+      } else {
+        // 即使降级也尝试加载视频列表
+        if (mounted) {
+          _loadVideoList();
+        }
       }
     }
   }
@@ -330,6 +355,50 @@ class _LongVideoPageState extends State<LongVideoPage> {
       }
     } catch (e) {
       PlvLogger.w('加载弹幕失败: $e');
+    }
+  }
+
+  /// 离线模式：直接加载指定视频，跳过网络列表加载
+  ///
+  /// 用于从下载中心点击已下载视频时直接播放，无需网络连接。
+  Future<void> _loadOfflineVideo(String vid) async {
+    try {
+      // 从下载任务获取标题和缩略图（如果有）
+      final title = widget.initialTitle ?? 'Video_$vid';
+      final thumbnail = widget.initialThumbnail ?? '';
+
+      // 创建一个临时的 VideoItem 用于显示
+      final tempVideo = VideoItem(
+        vid: vid,
+        title: title,
+        duration: 0,
+        thumbnail: thumbnail,
+      );
+
+      _currentVideo = tempVideo;
+      _videos = [tempVideo];  // 设置为单元素列表，避免 UI 异常
+      _isLoadingList = false;
+      _listError = null;
+
+      if (mounted) {
+        setState(() {
+          _isInitialLoading = false;
+        });
+      }
+
+      // 加载视频（自动检测离线播放模式）
+      // PlayerController 会通过 DownloadStateManager.instance.isCompleted(vid) 检测离线模式
+      await _controller.loadVideo(vid);
+
+      PlvLogger.d('LongVideoPage: Offline video loaded: $vid, title: $title');
+    } catch (e) {
+      PlvLogger.w('LongVideoPage: Failed to load offline video: $e');
+      if (mounted) {
+        setState(() {
+          _listError = '加载失败: $e';
+          _isInitialLoading = false;
+        });
+      }
     }
   }
 
