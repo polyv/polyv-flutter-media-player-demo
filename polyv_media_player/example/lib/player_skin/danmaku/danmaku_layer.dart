@@ -162,8 +162,8 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
   /// 1. 检测 seek 操作，清空活跃弹幕
   /// 2. 找到应该触发的弹幕：time <= currentTime 且在时间窗口内
   /// 3. 防止重复：只添加不在活跃列表中的弹幕
-  /// 4. 弹幕持续滚动直到动画完成（8秒）
-  /// 5. 分配到最空闲的轨道
+  /// 4. 弹幕持续滚动直到动画完成（10秒）
+  /// 5. 分配到最空闲的轨道，基于弹幕宽度计算轨道释放时间避免重叠
   ///
   /// 注意：弹幕开关状态变化由 didUpdateWidget 直接处理，不在此方法内
   ///
@@ -211,9 +211,13 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
     // 首次更新（例如横竖屏切换导致 DanmakuLayer 重新创建时）：
     //   使用完整动画窗口 [time, time + _animationDuration] 重新构建当前仍在屏幕上的弹幕，
     //   确保正在滚动中的弹幕在横竖屏切换后继续从正确位置滚动。
+    // 弹幕重新开启时：只显示当前播放时间之后的弹幕
 
     final shouldTriggerDanmakus = widget.danmakus.where((d) {
-      if (isInitialUpdate) {
+      if (_justReopened) {
+        // 弹幕重新开启：只显示当前播放时间之后的弹幕
+        return d.time >= currentTime && d.time <= currentTime + _timeWindow;
+      } else if (isInitialUpdate) {
         final int start = d.time;
         final int end = d.time + _animationDuration;
         return currentTime >= start && currentTime <= end;
@@ -225,30 +229,29 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
     // 2. 找出需要添加的新弹幕（在窗口内但不在活跃列表中的）
     final toAdd = <ActiveDanmaku>[];
 
+    // 获取屏幕宽度用于计算轨道占用时间
+    final screenWidth = _cachedScreenWidth ?? 400.0;
+    final fontSize = _fontSizes[widget.fontSize] ?? 14.0;
+
     for (final d in shouldTriggerDanmakus) {
       // 跳过已经在活跃列表中的弹幕
       if (activeIds.contains(d.id)) continue;
 
-      int track;
+      // 所有弹幕都作为滚动弹幕处理（从右向左滚动）
+      // 分配到最空闲的轨道
+      final minEndTime = _trackEndTime.reduce((a, b) => a < b ? a : b);
+      final track = _trackEndTime.indexOf(minEndTime);
 
-      if (d.type == DanmakuType.scroll) {
-        // 滚动弹幕：分配到最空闲的轨道
-        final minEndTime = _trackEndTime.reduce((a, b) => a < b ? a : b);
-        track = _trackEndTime.indexOf(minEndTime);
-        _trackEndTime[track] = now + _animationDuration;
-      } else if (d.type == DanmakuType.top) {
-        // 顶部固定弹幕：使用轨道 0-3（上半部分）
-        final topTracksEndTimes = _trackEndTime.sublist(0, 4);
-        final minEndTime = topTracksEndTimes.reduce((a, b) => a < b ? a : b);
-        track = _trackEndTime.indexOf(minEndTime);
-        _trackEndTime[track] = now + _animationDuration;
-      } else {
-        // 底部固定弹幕：使用轨道 4-7（下半部分）
-        final bottomTracksEndTimes = _trackEndTime.sublist(4, 8);
-        final minEndTime = bottomTracksEndTimes.reduce((a, b) => a < b ? a : b);
-        track = 4 + bottomTracksEndTimes.indexOf(minEndTime);
-        _trackEndTime[track] = now + _animationDuration;
-      }
+      // 计算弹幕宽度，用于确定轨道占用时间
+      final textWidth = _estimateTextWidth(d.text, fontSize);
+      // 弹幕完全进入屏幕所需时间 = (弹幕宽度 / 总移动距离) * 动画时长
+      // 总移动距离 = 屏幕宽度 + 弹幕宽度
+      // 为避免重叠，轨道释放时间 = 弹幕完全进入屏幕的时间 + 安全间隔
+      final totalDistance = screenWidth + textWidth;
+      final enterTime = (textWidth / totalDistance * _animationDuration)
+          .toInt();
+      final safetyMargin = 500; // 500ms 安全间隔
+      _trackEndTime[track] = now + enterTime + safetyMargin;
 
       // 创建活跃弹幕
       int startTime;
@@ -299,8 +302,33 @@ class _DanmakuLayerState extends State<DanmakuLayer> {
     _justReopened = false;
   }
 
+  /// 估算弹幕文本宽度
+  ///
+  /// 基于字符数和字体大小进行粗略估算
+  /// 中文字符约等于字体大小，英文字符约为字体大小的 0.6 倍
+  double _estimateTextWidth(String text, double fontSize) {
+    double width = 0;
+    for (int i = 0; i < text.length; i++) {
+      final codeUnit = text.codeUnitAt(i);
+      if (codeUnit > 127) {
+        // 非 ASCII 字符（中文等）
+        width += fontSize;
+      } else {
+        // ASCII 字符
+        width += fontSize * 0.6;
+      }
+    }
+    return width;
+  }
+
+  /// 缓存的屏幕宽度
+  double? _cachedScreenWidth;
+
   @override
   Widget build(BuildContext context) {
+    // 缓存屏幕宽度用于轨道占用时间计算
+    _cachedScreenWidth = MediaQuery.of(context).size.width;
+
     // 首次 build 时初始化弹幕
     if (!_isInitialized) {
       _isInitialized = true;
@@ -400,17 +428,15 @@ class _DanmakuItemState extends State<_DanmakuItem>
     final trackHeight = widget.availableHeight / 8;
     _initialTop = widget.danmaku.track * trackHeight;
 
-    // 只有滚动弹幕才需要动画控制器
-    if (widget.danmaku.type == DanmakuType.scroll) {
-      // 动画总时长
-      const totalDuration = Duration(milliseconds: 10000);
+    // 所有弹幕都使用滚动动画（从右向左）
+    // 动画总时长
+    const totalDuration = Duration(milliseconds: 10000);
 
-      // 创建动画控制器
-      _controller = AnimationController(duration: totalDuration, vsync: this);
+    // 创建动画控制器
+    _controller = AnimationController(duration: totalDuration, vsync: this);
 
-      // 创建从 1.0 到 0.0 的动画（1.0 = 右侧，0.0 = 左侧）
-      _animation = Tween<double>(begin: 1.0, end: 0.0).animate(_controller!);
-    }
+    // 创建从 1.0 到 0.0 的动画（1.0 = 右侧，0.0 = 左侧）
+    _animation = Tween<double>(begin: 1.0, end: 0.0).animate(_controller!);
   }
 
   /// 启动动画
@@ -472,8 +498,8 @@ class _DanmakuItemState extends State<_DanmakuItem>
     );
     final top = (_initialTop ?? 0.0).clamp(0.0, maxTop);
 
-    // 滚动弹幕：使用动画
-    if (widget.danmaku.type == DanmakuType.scroll && _animation != null) {
+    // 所有弹幕都使用滚动动画（从右向左）
+    if (_animation != null) {
       // 首次 build 时启动动画
       if (_isFirstFrame) {
         _isFirstFrame = false;
@@ -504,17 +530,14 @@ class _DanmakuItemState extends State<_DanmakuItem>
       );
     }
 
-    // 顶部/底部固定弹幕：居中显示，不滚动
+    // 备用：如果动画未初始化，显示在右侧
     return Positioned(
       top: top,
-      left: 0,
       right: 0,
-      child: Center(
-        child: _DanmakuText(
-          danmaku: widget.danmaku,
-          fontSize: widget.fontSize,
-          lineHeight: widget.lineHeight,
-        ),
+      child: _DanmakuText(
+        danmaku: widget.danmaku,
+        fontSize: widget.fontSize,
+        lineHeight: widget.lineHeight,
       ),
     );
   }
