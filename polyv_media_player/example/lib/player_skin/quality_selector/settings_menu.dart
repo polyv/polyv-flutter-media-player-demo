@@ -61,7 +61,7 @@ class _SettingsMenuState extends State<SettingsMenu> {
       onTap: widget.onClose,
       behavior: HitTestBehavior.opaque,
       child: Container(
-        color: Colors.black.withValues(alpha: 0.6),
+        color: Colors.transparent,
         alignment: Alignment.bottomCenter,
         child: GestureDetector(
           onTap: () {}, // 阻止点击内容区域时关闭
