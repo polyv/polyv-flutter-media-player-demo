@@ -503,7 +503,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
                         [self setupSubtitleModuleIfNeededForVideo:video];
                     });
                 } else {
-                    NSLog(@"[PolyvPlugin] Network request for metadata failed (expected in offline mode): %@", error?.localizedDescription);
+                    NSLog(@"[PolyvPlugin] Network request for metadata failed (expected in offline mode): %@", error.localizedDescription);
                 }
             }];
         } else {

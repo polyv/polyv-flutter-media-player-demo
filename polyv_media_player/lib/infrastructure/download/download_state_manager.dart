@@ -467,10 +467,9 @@ class DownloadStateManager extends ChangeNotifier {
   /// 获取单例实例
   ///
   /// 如果实例不存在，会创建一个新的实例。
-  /// 注意：使用单例时需要确保调用了 enableEventListener=false 的构造函数，
-  /// 因为单例不应该重复创建 EventChannel 订阅。
+  /// 单例默认启用 EventChannel 事件监听，以便接收原生层的下载进度更新。
   static DownloadStateManager get instance {
-    _instance ??= DownloadStateManager(enableEventListener: false);
+    _instance ??= DownloadStateManager(enableEventListener: true);
     return _instance!;
   }
 
