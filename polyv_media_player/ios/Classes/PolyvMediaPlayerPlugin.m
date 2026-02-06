@@ -1194,6 +1194,18 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 - (void)plvMediaPlayerCore:(PLVMediaPlayerCore *)player playerIsPreparedToPlay:(BOOL)prepared {
     if (prepared) {
         [self sendStateChangeEvent:kStatePrepared];
+
+        // 发送字幕列表事件（与 Android 保持一致，在 onPrepared 时发送）
+        // 默认开启字幕，让 Flutter 层根据默认算法选择字幕
+        [self sendSubtitleChangedEventWithEnabled:YES trackKey:nil];
+
+        // 重播场景：如果 shouldSeekToStartOnPrepared 为 YES，seek 到 0
+        // 这确保重播时从头播放，而不是从 SDK 恢复的上次位置
+        if (self.shouldSeekToStartOnPrepared) {
+            NSLog(@"[PolyvPlugin] shouldSeekToStartOnPrepared=YES, seeking to 0");
+            [self.player seekToTime:0.0];
+            self.shouldSeekToStartOnPrepared = NO;
+        }
     }
 }
 
