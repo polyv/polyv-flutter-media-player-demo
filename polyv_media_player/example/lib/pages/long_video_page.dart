@@ -511,16 +511,8 @@ class _LongVideoPageState extends State<LongVideoPage> {
     // 重置用户交互标志（切换视频后需要再次点击才会显示控制条）
     _hasUserInteracted = false;
 
-    // 先停止播放器
-    _controller.stop();
-
-    // 改变 keySeed 强制重建视频视图，清除旧画面
-    _videoViewKeySeed = Object();
-
-    // 等待播放器停止和视图重建
-    await Future.delayed(const Duration(milliseconds: 100));
-
-    // 更新 UI 状态（显示遮罩）
+    // 先显示黑色遮罩，再停止播放器和重建视图
+    // 这样可以避免旧视频画面在视图重建期间闪烁
     setState(() {
       _isSwitchingVideo = true;
       _lastSwitchTime = DateTime.now();
@@ -528,7 +520,16 @@ class _LongVideoPageState extends State<LongVideoPage> {
     });
 
     // 等待黑色遮罩显示
-    await Future.delayed(const Duration(milliseconds: 100));
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    // 停止播放器
+    _controller.stop();
+
+    // 改变 keySeed 强制重建视频视图，清除旧画面
+    _videoViewKeySeed = Object();
+
+    // 等待播放器停止和视图重建
+    await Future.delayed(const Duration(milliseconds: 50));
 
     try {
       // 加载新视频
