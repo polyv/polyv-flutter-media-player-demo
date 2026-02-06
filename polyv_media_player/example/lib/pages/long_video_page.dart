@@ -9,7 +9,6 @@ import '../player_skin/player_colors.dart';
 import '../player_skin/video_list/video_list_view.dart' show VideoListView;
 import '../subtitle/subtitle_toggle.dart';
 import '../player_skin/control_bar_state_machine.dart';
-import '../player_skin/double_tap_detector.dart';
 import '../player_skin/gestures/player_gesture_controller.dart';
 import '../player_skin/gestures/player_gesture_detector.dart';
 import 'package:polyv_media_player/utils/plv_logger.dart';
@@ -99,9 +98,6 @@ class _LongVideoPageState extends State<LongVideoPage> {
 
   // 锁定状态
   bool _isLocked = false;
-
-  // 双击视觉反馈状态
-  bool _showDoubleTapFeedback = false;
 
   // 手势控制器 - 处理滑动手势（seek、亮度、音量）
   final PlayerGestureController _gestureController = PlayerGestureController();
@@ -279,45 +275,34 @@ class _LongVideoPageState extends State<LongVideoPage> {
     );
   }
 
-  /// 处理视频区域双击 - 切换全屏
+  /// 处理视频区域双击 - 切换播放/暂停
   ///
   /// 场景覆盖：
-  /// - 场景1: 竖屏双击进入横屏全屏
-  /// - 场景2: 横屏双击退出全屏返回竖屏
+  /// - 场景1: 播放中双击暂停
+  /// - 场景2: 暂停状态双击播放
   /// - 场景3: 锁屏状态下不响应
   /// - 场景4: 切换视频期间不响应
-  /// - 场景5: 切换后保持播放状态、进度、设置不变
   void _handleDoubleTap() {
-    // 场景3: 锁屏状态下不响应全屏切换
+    // 场景3: 锁屏状态下不响应
     if (_isLocked) return;
 
     // 场景4: 切换视频期间不响应
     if (_isSwitchingVideo) return;
 
-    // 显示双击视觉反馈
-    _showDoubleTapFeedbackAnim();
+    // 切换播放/暂停
+    if (_isPlaying) {
+      _controller.pause();
+    } else {
+      _controller.play();
+    }
 
-    // 切换全屏（复用现有的 _toggleFullscreen 方法）
-    _toggleFullscreen();
-
-    // 全屏切换后显示控制栏并重置自动隐藏计时器
+    // 双击后显示控制栏并重置自动隐藏计时器
     if (!_hasUserInteracted) {
       _hasUserInteracted = true;
     }
     _controlBarStateMachine.enterActive(
       autoHideTimeout: const Duration(seconds: 3),
     );
-  }
-
-  /// 显示双击视觉反馈动画
-  void _showDoubleTapFeedbackAnim() {
-    setState(() => _showDoubleTapFeedback = true);
-    // 使用与 DoubleTapDetector 相同的延迟时间
-    Future.delayed(DoubleTapDetector.defaultDoubleTapDelay, () {
-      if (mounted) {
-        setState(() => _showDoubleTapFeedback = false);
-      }
-    });
   }
 
   Future<void> _loadVideo(String vid) async {
@@ -669,9 +654,6 @@ class _LongVideoPageState extends State<LongVideoPage> {
               // 中间播放按钮
               _buildCenterPlayButton(),
 
-              // 双击视觉反馈
-              _buildDoubleTapFeedback(),
-
               // 重播界面
               _buildReplayOverlay(),
 
@@ -720,9 +702,6 @@ class _LongVideoPageState extends State<LongVideoPage> {
 
                 // 中间播放按钮
                 _buildCenterPlayButton(),
-
-                // 双击视觉反馈
-                _buildDoubleTapFeedback(),
 
                 // 重播界面
                 _buildReplayOverlay(),
@@ -1046,36 +1025,12 @@ class _LongVideoPageState extends State<LongVideoPage> {
     );
   }
 
-  /// 构建双击视觉反馈
-  ///
-  /// 双击时显示全屏图标缩放动画，提供视觉反馈。
-  Widget _buildDoubleTapFeedback() {
-    if (!_showDoubleTapFeedback) return const SizedBox.shrink();
-
-    return Positioned.fill(
-      child: Center(
-        child: AnimatedScale(
-          scale: _showDoubleTapFeedback ? 1.2 : 1.0,
-          duration: const Duration(milliseconds: 150),
-          curve: Curves.easeOut,
-          child: Icon(
-            _isFullscreen
-                ? Icons.fullscreen_exit_rounded
-                : Icons.fullscreen_rounded,
-            color: Colors.white.withValues(alpha: 0.8),
-            size: 64,
-          ),
-        ),
-      ),
-    );
-  }
-
   /// 构建横屏模式控制层
   ///
   /// 包含：顶部栏、右侧弹幕栏、底部控制栏、左侧锁定栏
   Widget _buildLandscapeControls() {
     // 切换视频期间不显示控制条
-    if (_isSwitchingVideo || !_isControlBarVisible) {
+    if (_isSwitchingVideo) {
       return const SizedBox.shrink();
     }
 
@@ -1083,15 +1038,8 @@ class _LongVideoPageState extends State<LongVideoPage> {
       child: Stack(
         children: [
           // 锁定状态下的解锁按钮
-          if (_isLocked)
-            IgnorePointer(
-              ignoring: !_isControlBarVisible,
-              child: AnimatedOpacity(
-                opacity: _isControlBarVisible ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 300),
-                child: Stack(children: [_buildLandscapeLeftBarLocked()]),
-              ),
-            ),
+          // 注意：锁定状态下解锁按钮始终可见且可点击
+          if (_isLocked) _buildLandscapeLeftBarLocked(),
 
           // 非锁定状态下的控制栏
           if (!_isLocked)
@@ -1213,18 +1161,23 @@ class _LongVideoPageState extends State<LongVideoPage> {
                 onPressed: _exitFullscreen,
               ),
               const SizedBox(width: 8),
-              // 标题
-              const Expanded(
-                child: Text(
-                  '保利威企业介绍视频', // 暂时写死，后续可从数据获取
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
+              // 标题（动态显示当前视频标题，限制最大宽度）
+              Flexible(
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 300),
+                  child: Text(
+                    _currentVideo?.title ?? '视频',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
+              const Spacer(),
               // 更多按钮
               IconButton(
                 icon: const Icon(Icons.more_horiz_rounded, color: Colors.white),

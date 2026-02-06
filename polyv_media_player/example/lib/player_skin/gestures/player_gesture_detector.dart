@@ -82,8 +82,10 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
   }
 
   /// 处理点击（由 DoubleTapDetector 调用）
+  ///
+  /// 锁定状态下也允许点击，以便显示解锁按钮
   void _handleTap() {
-    if (!widget.isLocked && !_hasSignificantPanMovement) {
+    if (!_hasSignificantPanMovement) {
       widget.onTap?.call();
     }
   }
