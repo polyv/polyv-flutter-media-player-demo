@@ -5,6 +5,7 @@ import '../platform_channel/event_channel_handler.dart';
 import '../platform_channel/method_channel_handler.dart';
 import '../platform_channel/player_api.dart';
 import '../services/subtitle_preference_service.dart';
+import '../services/video_progress_service.dart';
 import '../infrastructure/download/download_state_manager.dart';
 import '../utils/plv_logger.dart';
 import 'player_exception.dart';
@@ -56,6 +57,12 @@ class PlayerController extends ChangeNotifier {
 
   /// 是否已释放
   bool _disposed = false;
+
+  /// 上次保存进度的时间（用于节流）
+  int? _lastProgressSaveTime;
+
+  /// 当前视频是否已恢复过播放进度（避免重复恢复）
+  bool _hasRestoredProgress = false;
 
   /// 获取当前播放器状态
   PlayerState get state => _state;
@@ -212,7 +219,47 @@ class PlayerController extends ChangeNotifier {
     final stateStr = data['state']?.toString();
     final newState = _parseLoadingState(stateStr);
 
+    PlvLogger.d('[PlayerController] _handleStateChanged: $stateStr -> $newState, hasRestored: $_hasRestoredProgress');
+
     _updateState(_state.copyWith(loadingState: newState));
+
+    // 当视频准备完成时，尝试恢复之前保存的播放进度
+    // 必须在 prepared 状态时恢复，因为原生层在 prepared 之后会 seek 到 0
+    if (newState == PlayerLoadingState.prepared && !_hasRestoredProgress) {
+      PlvLogger.d('[PlayerController] _handleStateChanged: Triggering progress restore at prepared');
+      _hasRestoredProgress = true;
+      _restoreSavedProgress();
+    }
+  }
+
+  /// 恢复之前保存的播放进度
+  Future<void> _restoreSavedProgress() async {
+    final vid = _state.vid;
+    if (vid == null || vid.isEmpty) {
+      PlvLogger.w('[PlayerController] _restoreSavedProgress: vid is null or empty');
+      return;
+    }
+
+    PlvLogger.d('[PlayerController] _restoreSavedProgress: Attempting to restore progress for $vid');
+
+    try {
+      final savedPosition = await VideoProgressService.loadProgress(vid);
+      PlvLogger.d('[PlayerController] _restoreSavedProgress: savedPosition = $savedPosition');
+
+      if (savedPosition != null && savedPosition > 0) {
+        PlvLogger.d('[PlayerController] _restoreSavedProgress: Seeking to $savedPosition ms');
+        // 先暂停，确保 seek 时不会开始播放
+        await pause();
+        // 延迟确保原生层的 seekToTime:0.0 已完成
+        await Future.delayed(const Duration(milliseconds: 200));
+        await seekTo(savedPosition);
+        PlvLogger.d('[PlayerController] _restoreSavedProgress: Successfully restored to $savedPosition ms');
+      } else {
+        PlvLogger.d('[PlayerController] _restoreSavedProgress: No saved position to restore');
+      }
+    } catch (e) {
+      PlvLogger.w('[PlayerController] Failed to restore saved progress: $e');
+    }
   }
 
   /// 处理进度更新
@@ -230,6 +277,31 @@ class PlayerController extends ChangeNotifier {
         bufferedPosition: buffered,
       ),
     );
+
+    // 节流保存播放进度（避免频繁写入 SharedPreferences）
+    _saveProgressThrottled(position, duration);
+  }
+
+  /// 节流保存播放进度
+  ///
+  /// 基于时间间隔节流，避免频繁写入 SharedPreferences
+  void _saveProgressThrottled(int position, int duration) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    const minInterval = 1000; // 1秒
+
+    // 检查是否需要保存（基于时间间隔）
+    if (_lastProgressSaveTime == null ||
+        (now - (_lastProgressSaveTime ?? 0)) >= minInterval) {
+      _lastProgressSaveTime = now;
+      PlvLogger.d('[PlayerController] Saving progress: ${position}ms for vid: ${_state.vid}');
+
+      // 异步保存，不阻塞播放
+      VideoProgressService.saveProgress(
+        vid: _state.vid!,
+        position: position,
+        duration: duration,
+      );
+    }
   }
 
   /// 处理错误
@@ -594,10 +666,19 @@ class PlayerController extends ChangeNotifier {
       PlvLogger.d(
         '[PlayerController] loadVideo called with vid: $vid, autoPlay: $autoPlay',
       );
-      // 使用 copyWith 保留当前倍速状态，避免切换视频时倍速被重置为 1.0
+
+      // 重置节流状态和恢复标志
+      _lastProgressSaveTime = null;
+      _hasRestoredProgress = false;
+
+      // 使用 copyWith 保留当前倍速状态，但重置 position/duration/bufferedPosition
+      // 稍后会尝试恢复保存的播放进度
       _updateState(_state.copyWith(
         loadingState: PlayerLoadingState.loading,
         vid: vid,
+        position: 0,
+        duration: 0,
+        bufferedPosition: 0,
       ));
       PlvLogger.d(
         '[PlayerController] State updated to loading, vid: ${_state.vid}, speed: ${_state.playbackSpeed}',
@@ -664,6 +745,21 @@ class PlayerController extends ChangeNotifier {
     } on PlatformException catch (e) {
       throw PlayerException.fromPlatformException(e);
     }
+  }
+
+  /// 重播（从头开始播放）
+  ///
+  /// 清除当前视频的播放进度记录，并从头开始播放
+  Future<void> replay() async {
+    final vid = _state.vid;
+    if (vid != null && vid.isNotEmpty) {
+      // 清除保存的播放进度
+      await VideoProgressService.clearProgress(vid);
+    }
+
+    // 跳转到开头并播放
+    await seekTo(0);
+    await play();
   }
 
   /// 跳转到指定位置

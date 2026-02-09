@@ -985,11 +985,9 @@ class _LongVideoPageState extends State<LongVideoPage> {
         child: Center(
           child: GestureDetector(
             onTap: () {
-              // 重播
+              // 重播 - 使用 replay 方法清除进度并从头播放
               setState(() => _isEnded = false);
-              if (_currentVideo != null) {
-                _loadVideo(_currentVideo!.vid);
-              }
+              _controller.replay();
             },
             child: Column(
               mainAxisSize: MainAxisSize.min,

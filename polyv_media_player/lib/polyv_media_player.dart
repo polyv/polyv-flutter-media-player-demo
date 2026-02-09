@@ -18,6 +18,7 @@ export 'platform_channel/method_channel_handler.dart';
 
 // Services exports
 export 'services/subtitle_preference_service.dart';
+export 'services/video_progress_service.dart';
 export 'services/player_initializer.dart';
 export 'services/polyv_config_service.dart';
 
