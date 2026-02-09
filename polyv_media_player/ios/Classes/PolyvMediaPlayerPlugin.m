@@ -312,6 +312,12 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     self.qualitySwitchOperationId += 1;
     self.shouldSeekToStartOnPrepared = YES;
 
+    // 清理旧播放器和视频画面，防止切换时显示旧视频的残影
+    // 注意：实际清理在视频加载完成后执行，这里只是先暂停播放
+    if (self.player) {
+        [self.player pause];
+    }
+
     [self.subtitleCoordinator resetAll];
 
     // 确保账号已配置（优先使用已有配置，否则从 Info.plist 读取）
@@ -377,6 +383,16 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         [self sendQualityDataForVideo:video];
 
         dispatch_async(dispatch_get_main_queue(), ^{
+            // 在设置新视频前清理旧播放器，防止显示旧视频残影
+            [self.playerSession clearPlayer];
+
+            // 清理视图显示
+            UIView *containerView = self.videoViewController.containerView;
+            if (containerView) {
+                containerView.backgroundColor = [UIColor blackColor];
+                containerView.layer.contents = nil;
+            }
+
             if (self.videoViewController) {
                 NSLog(@"[PolyvPlugin] Setting up display superview BEFORE setVideo");
                 [self.playerSession preparePlayerWithVideo:video
@@ -456,13 +472,23 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Step 2: 设置显示视图
+        // Step 2: 在设置新视频前清理旧播放器，防止显示旧视频残影
+        [self.playerSession clearPlayer];
+
+        // 清理视图显示
+        UIView *containerView = self.videoViewController.containerView;
+        if (containerView) {
+            containerView.backgroundColor = [UIColor blackColor];
+            containerView.layer.contents = nil;
+        }
+
+        // Step 3: 设置显示视图
         if (self.videoViewController) {
             NSLog(@"[PolyvPlugin] Setting up display superview for offline playback");
             [self.playerSession setupDisplaySuperview:self.videoViewController.containerView coreDelegate:self vodDelegate:self];
         }
 
-        // Step 3: 创建本地视频对象
+        // Step 4: 创建本地视频对象
         PLVLocalVideo *localVideo = [self.playerSession localVideoWithVid:vid downloadDir:downloadDir];
         if (!localVideo) {
             NSLog(@"[PolyvPlugin] ERROR: Failed to create local video for vid: %@", vid);
@@ -474,7 +500,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
             return;
         }
 
-        // Step 4: 设置播放器使用本地视频
+        // Step 5: 设置播放器使用本地视频
         [self.playerSession preparePlayerWithVideo:localVideo
                                   displaySuperview:(self.videoViewController ? self.videoViewController.containerView : nil)
                                     applyLocalPrior:YES
@@ -486,13 +512,13 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         NSLog(@"[PolyvPlugin] Local video loaded, playbackState: %ld", (long)self.player.playbackState);
         NSLog(@"[PolyvPlugin] Position reset to 0");
 
-        // Step 5: 如果已有元数据，立即返回成功
+        // Step 6: 如果已有元数据，立即返回成功
         // 这样即使无网络，Flutter 层也能收到响应并继续播放
         if (hasMetadataFromDownload) {
             NSLog(@"[PolyvPlugin] Offline playback ready (using cached metadata)");
             result(nil);
 
-            // Step 6: 可选：后台尝试获取最新元数据（不阻塞播放）
+            // Step 7: 可选：后台尝试获取最新元数据（不阻塞播放）
             // 这样可以在有网络时更新元数据，但无网络时也能播放
             [self.playerSession requestVideoWithVid:vid completion:^(PLVVodMediaVideo *video, NSError *error) {
                 if (video && !error) {
