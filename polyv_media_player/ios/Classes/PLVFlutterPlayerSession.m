@@ -33,7 +33,7 @@
         self.player = [[PLVVodMediaPlayer alloc] init];
         self.player.autoPlay = YES;
         self.player.videoToolBox = NO;
-        self.player.rememberLastPosition = NO;
+        self.player.rememberLastPosition = YES;  // 与原生 demo 一致
         self.player.seekType = PLVVodMediaPlaySeekTypePrecise;
     }
 

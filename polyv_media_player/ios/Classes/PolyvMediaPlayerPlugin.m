@@ -654,7 +654,6 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
  }
 
 - (void)handleSetQuality:(NSDictionary *)args result:(FlutterResult)result {
-    NSLog(@"[PolyvPlugin] ========== handleSetQuality called ==========");
     if (!self.player) {
         result([FlutterError errorWithCode:kErrorCodeNotInitialized
                                     message:@"Player not initialized"
@@ -663,65 +662,30 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     }
 
     NSInteger index = [args[@"index"] integerValue];
-    NSLog(@"[PolyvPlugin] Switching to quality index (UI layer): %ld", (long)index);
 
     // UI 层的索引需要 +1 来匹配 SDK 的枚举值（因为去掉了"自动"选项）
     // iOS SDK 的清晰度枚举: 0=自动, 1=流畅, 2=高清, 3=超清
     // UI 层显示: 流畅, 高清, 超清（对应 SDK 的 1, 2, 3）
     NSInteger sdkIndex = index + 1;
-
-    // 不再检查 qualityCount，因为某些视频的 qualityCount 值可能不准确
-    // 直接让 SDK 处理清晰度切换，如果清晰度不可用 SDK 会自动处理
-
-    // 记录当前播放位置和状态，用于切换后恢复
-    // 为了避免切换清晰度期间继续播放一小段再 seek 回来导致的音频重复感，
-    // 若当前正在播放，则先暂停，再读取当前位置。
-    BOOL wasPlaying = (self.player.playbackState == PLVPlaybackStatePlaying);
-    if (wasPlaying) {
-        [self.player pause];
-    }
-    NSTimeInterval currentPosition = self.player.currentPlaybackTime;
-    NSLog(@"[PolyvPlugin] Current position: %.2f, was playing: %d", currentPosition, wasPlaying);
-
-    NSInteger operationId = (self.qualitySwitchOperationId += 1);
-    NSString *vidAtStart = [self.currentVid copy];
-
     PLVVodMediaQuality quality = (PLVVodMediaQuality)sdkIndex;
-    NSLog(@"[PolyvPlugin] Calling setPlayQuality: %ld", (long)quality);
 
-    [self.player setPlayQuality:quality];
+    // 调用 SDK 的 setPlayQuality: 方法
+    // SDK 内部会自动处理续播、URL 切换等
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self.player setPlayQuality:quality];
+    });
+
     // 保存 SDK 层的索引
     self.currentQualityIndex = sdkIndex;
 
-    // 持久化保存用户选择的清晰度，以便下次进入页面时恢复
-    // 注意：currentQualityIndex 是 SDK 层的索引（0=自动, 1=流畅, 2=高清, 3=超清）
+    // 持久化保存用户选择的清晰度
     if (self.currentQualityIndex > 0) {
         [[NSUserDefaults standardUserDefaults] setInteger:sdkIndex forKey:@"PLVLastSelectedQuality"];
         [[NSUserDefaults standardUserDefaults] synchronize];
-        NSLog(@"[PolyvPlugin] Saved quality index: %ld", (long)sdkIndex);
     }
 
-    // 发送更新后的清晰度数据（传入 UI 层的索引）
+    // 发送更新后的清晰度数据
     [self sendQualityDataForVideo:self.currentVideo updateCurrentIndex:sdkIndex];
-
-    // 恢复播放位置和状态
-    // 需要延迟一点，让播放器完成清晰度切换
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (operationId != self.qualitySwitchOperationId || ![self.currentVid isEqualToString:vidAtStart]) {
-            return;
-        }
-        if (currentPosition > 0) {
-            NSLog(@"[PolyvPlugin] Restoring position to: %.2f", currentPosition);
-            [self.player seekToTime:currentPosition];
-        }
-        if (wasPlaying) {
-            NSLog(@"[PolyvPlugin] Resuming playback");
-            [self.player play];
-        }
-
-        // 显式回传一次播放状态，避免某些情况下 SDK 未触发 playbackState 回调，导致 Flutter UI 图标与实际播放状态不一致
-        [self sendStateChangeEvent:(wasPlaying ? kStatePlaying : kStatePaused)];
-    });
 
     result(nil);
 }
@@ -1267,13 +1231,23 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         self.currentQualityIndex = updateIndex;
     }
 
+    // 定义所有可能的清晰度（按顺序：流畅、高清、超清）
+    // 注意：iOS SDK 的清晰度枚举: 0=自动, 1=流畅, 2=高清, 3=超清
     NSArray<NSDictionary *> *qualityDefinitions = @[
         @{@"enum": @(PLVVodMediaQualityStandard), @"description": @"流畅", @"value": @"480p"},
         @{@"enum": @(PLVVodMediaQualityHigh), @"description": @"高清", @"value": @"720p"},
         @{@"enum": @(PLVVodMediaQualityUltra), @"description": @"超清", @"value": @"1080p"},
     ];
 
-    for (NSDictionary *def in qualityDefinitions) {
+    // 根据 video.qualityCount 动态决定显示多少个清晰度选项
+    NSInteger availableQualityCount = video.qualityCount;
+    if (availableQualityCount <= 0 || availableQualityCount > 3) {
+        availableQualityCount = 3;
+    }
+
+    // 只显示前 availableQualityCount 个清晰度选项
+    for (NSInteger i = 0; i < availableQualityCount; i++) {
+        NSDictionary *def = qualityDefinitions[i];
         [qualitiesList addObject:@{
             @"description": def[@"description"],
             @"value": def[@"value"],
@@ -1281,21 +1255,36 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
         }];
     }
 
-    if (currentIndex > 0) {
-        currentIndex = currentIndex - 1;
-    } else {
-        currentIndex = 1;
+    // 调整 currentIndex 以匹配新的列表
+    // 原来的 currentIndex 是 SDK 层的索引（1=流畅, 2=高清, 3=超清）
+    // 需要确保它在当前视频支持的范围内
+
+    // 先将 SDK 层索引转换为 UI 层索引
+    NSInteger uiCurrentIndex = 0;
+
+    if (currentIndex > 0 && currentIndex <= qualityDefinitions.count) {
+        uiCurrentIndex = currentIndex - 1;
     }
 
-    if (currentIndex >= qualitiesList.count) {
-        currentIndex = 1;
+    // 确保 uiCurrentIndex 在有效范围内
+    if (uiCurrentIndex >= availableQualityCount) {
+        uiCurrentIndex = availableQualityCount - 1;
+    }
+    if (uiCurrentIndex < 0) {
+        uiCurrentIndex = 0;
+    }
+
+    // 更新 currentQualityIndex 以匹配实际使用的清晰度
+    NSInteger adjustedSdkIndex = uiCurrentIndex + 1;
+    if (adjustedSdkIndex != currentIndex) {
+        self.currentQualityIndex = adjustedSdkIndex;
     }
 
     [self.eventEmitter sendPlayerEvent:@{
         @"type": @"qualityChanged",
         @"data": @{
             @"qualities": qualitiesList,
-            @"currentIndex": @(currentIndex)
+            @"currentIndex": @(uiCurrentIndex)
         }
     }];
 }
