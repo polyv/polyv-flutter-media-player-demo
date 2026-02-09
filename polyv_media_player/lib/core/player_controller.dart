@@ -64,6 +64,13 @@ class PlayerController extends ChangeNotifier {
   /// 当前视频是否已恢复过播放进度（避免重复恢复）
   bool _hasRestoredProgress = false;
 
+  /// 切换视频期间的最后位置（用于在切换前保存进度）
+  int? _pendingSavePosition;
+  int? _pendingSaveDuration;
+
+  /// 是否正在切换视频（用于忽略切换期间的进度更新）
+  bool _isSwitchingVideo = false;
+
   /// 获取当前播放器状态
   PlayerState get state => _state;
 
@@ -223,11 +230,12 @@ class PlayerController extends ChangeNotifier {
 
     _updateState(_state.copyWith(loadingState: newState));
 
-    // 当视频准备完成时，尝试恢复之前保存的播放进度
+    // 当视频准备完成时，清除切换标志并尝试恢复之前保存的播放进度
     // 必须在 prepared 状态时恢复，因为原生层在 prepared 之后会 seek 到 0
     if (newState == PlayerLoadingState.prepared && !_hasRestoredProgress) {
       PlvLogger.d('[PlayerController] _handleStateChanged: Triggering progress restore at prepared');
       _hasRestoredProgress = true;
+      _isSwitchingVideo = false; // 清除切换标志
       _restoreSavedProgress();
     }
   }
@@ -253,7 +261,10 @@ class PlayerController extends ChangeNotifier {
         // 延迟确保原生层的 seekToTime:0.0 已完成
         await Future.delayed(const Duration(milliseconds: 200));
         await seekTo(savedPosition);
-        PlvLogger.d('[PlayerController] _restoreSavedProgress: Successfully restored to $savedPosition ms');
+
+        // 恢复进度后继续播放（因为 loadVideo 默认 autoPlay=true）
+        await play();
+        PlvLogger.d('[PlayerController] _restoreSavedProgress: Successfully restored to $savedPosition ms and resumed playback');
       } else {
         PlvLogger.d('[PlayerController] _restoreSavedProgress: No saved position to restore');
       }
@@ -278,6 +289,13 @@ class PlayerController extends ChangeNotifier {
       ),
     );
 
+    // 如果正在切换视频，忽略进度更新（防止 stop() 导致的 position=0 覆盖新视频进度）
+    // 但仍然更新 pendingSavePosition，以便在加载新视频前保存旧视频的最后进度
+    if (_isSwitchingVideo) {
+      PlvLogger.d('[PlayerController] Ignoring progress save during video switch');
+      return;
+    }
+
     // 节流保存播放进度（避免频繁写入 SharedPreferences）
     _saveProgressThrottled(position, duration);
   }
@@ -293,11 +311,22 @@ class PlayerController extends ChangeNotifier {
     if (_lastProgressSaveTime == null ||
         (now - (_lastProgressSaveTime ?? 0)) >= minInterval) {
       _lastProgressSaveTime = now;
-      PlvLogger.d('[PlayerController] Saving progress: ${position}ms for vid: ${_state.vid}');
+
+      // 保存当前状态用于可能的延迟保存
+      _pendingSavePosition = position;
+      _pendingSaveDuration = duration;
+
+      final vid = _state.vid;
+      if (vid == null || vid.isEmpty) {
+        PlvLogger.w('[PlayerController] Cannot save progress: vid is null or empty');
+        return;
+      }
+
+      PlvLogger.d('[PlayerController] Saving progress: ${position}ms for vid: $vid');
 
       // 异步保存，不阻塞播放
       VideoProgressService.saveProgress(
-        vid: _state.vid!,
+        vid: vid,
         position: position,
         duration: duration,
       );
@@ -667,9 +696,32 @@ class PlayerController extends ChangeNotifier {
         '[PlayerController] loadVideo called with vid: $vid, autoPlay: $autoPlay',
       );
 
+      // 在切换视频前，先保存当前视频的最后进度
+      // 这是为了防止 stop() 导致的延迟进度事件覆盖新视频的进度
+      final currentVid = _state.vid;
+      if (currentVid != null &&
+          currentVid.isNotEmpty &&
+          currentVid != vid &&
+          _pendingSavePosition != null &&
+          _pendingSaveDuration != null) {
+        PlvLogger.d(
+          '[PlayerController] Saving final progress for $currentVid before switching: ${_pendingSavePosition}ms',
+        );
+        VideoProgressService.saveProgress(
+          vid: currentVid,
+          position: _pendingSavePosition!,
+          duration: _pendingSaveDuration!,
+        );
+      }
+
       // 重置节流状态和恢复标志
       _lastProgressSaveTime = null;
       _hasRestoredProgress = false;
+      _pendingSavePosition = null;
+      _pendingSaveDuration = null;
+
+      // 设置切换标志，忽略切换期间的进度更新
+      _isSwitchingVideo = true;
 
       // 使用 copyWith 保留当前倍速状态，但重置 position/duration/bufferedPosition
       // 稍后会尝试恢复保存的播放进度
@@ -697,12 +749,18 @@ class PlayerController extends ChangeNotifier {
         isOfflineMode: isOfflineMode,
       );
       PlvLogger.d('[PlayerController] Platform channel call completed');
+
+      // 加载完成后，清除切换标志（prepared 状态会自动清除）
     } on PlatformException catch (e) {
+      // 发生异常时也要清除切换标志
+      _isSwitchingVideo = false;
       PlvLogger.w(
         '[PlayerController] PlatformException: ${e.message}, code: ${e.code}',
       );
       throw PlayerException.fromPlatformException(e);
     } catch (e) {
+      // 发生异常时也要清除切换标志
+      _isSwitchingVideo = false;
       PlvLogger.w('[PlayerController] Exception: $e');
       rethrow;
     }
