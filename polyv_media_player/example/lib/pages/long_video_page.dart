@@ -1134,6 +1134,10 @@ class _LongVideoPageState extends State<LongVideoPage> {
 
   /// 横屏顶部栏
   Widget _buildLandscapeTopBar() {
+    // 获取安全区域内边距（顶部安全区域，如刘海屏）
+    final mediaQuery = MediaQuery.of(context);
+    final topPadding = mediaQuery.padding.top;
+
     return Positioned(
       top: 0,
       left: 0,
@@ -1146,52 +1150,75 @@ class _LongVideoPageState extends State<LongVideoPage> {
             colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
           ),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        child: SafeArea(
-          bottom: false,
-          child: Row(
-            children: [
-              // 返回按钮
-              IconButton(
-                icon: const Icon(
-                  Icons.arrow_back_ios_rounded,
-                  color: Colors.white,
-                ),
-                onPressed: _exitFullscreen,
-              ),
-              const SizedBox(width: 8),
-              // 标题（动态显示当前视频标题，限制最大宽度）
-              Flexible(
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 300),
-                  child: Text(
-                    _currentVideo?.title ?? '视频',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
-                ),
-              ),
-              const Spacer(),
-              // 更多按钮
-              IconButton(
-                icon: const Icon(Icons.more_horiz_rounded, color: Colors.white),
-                onPressed: () {
-                  SettingsMenu.show(
-                    context: context,
-                    controller: _controller,
-                    videoTitle: _currentVideo?.title,
-                    videoThumbnail: _currentVideo?.thumbnail,
-                  );
-                },
-              ),
-            ],
-          ),
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 8 + topPadding,
+          bottom: 8,
         ),
+        child: Row(
+          children: [
+            // 返回按钮
+            _buildBackButton(),
+            const SizedBox(width: 8),
+            // 标题（动态显示当前视频标题，限制最大宽度）
+            Expanded(
+              child: Text(
+                _currentVideo?.title ?? '视频',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+            // 更多按钮
+            _buildMoreButton(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 返回按钮
+  Widget _buildBackButton() {
+    return SizedBox(
+      width: 48,
+      height: 48,
+      child: IconButton(
+        icon: const Icon(
+          Icons.arrow_back_ios_rounded,
+          color: Colors.white,
+          size: 24,
+        ),
+        padding: EdgeInsets.zero,
+        onPressed: _exitFullscreen,
+      ),
+    );
+  }
+
+  /// 更多按钮
+  Widget _buildMoreButton() {
+    return SizedBox(
+      width: 48,
+      height: 48,
+      child: IconButton(
+        icon: const Icon(
+          Icons.more_horiz_rounded,
+          color: Colors.white,
+          size: 24,
+        ),
+        padding: EdgeInsets.zero,
+        onPressed: () {
+          SettingsMenu.show(
+            context: context,
+            controller: _controller,
+            videoTitle: _currentVideo?.title,
+            videoThumbnail: _currentVideo?.thumbnail,
+          );
+        },
       ),
     );
   }
@@ -1357,32 +1384,42 @@ class _LongVideoPageState extends State<LongVideoPage> {
   }
 
   Widget _buildPlayPauseButton() {
-    return IconButton(
-      icon: Icon(
-        _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-        color: Colors.white,
-        size: 28,
+    return SizedBox(
+      width: 48,
+      height: 48,
+      child: IconButton(
+        icon: Icon(
+          _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          color: Colors.white,
+          size: 28,
+        ),
+        padding: EdgeInsets.zero,
+        onPressed: () {
+          if (_isPlaying) {
+            _controller.pause();
+          } else {
+            _controller.play();
+          }
+        },
       ),
-      onPressed: () {
-        if (_isPlaying) {
-          _controller.pause();
-        } else {
-          _controller.play();
-        }
-      },
     );
   }
 
   Widget _buildFullscreenButton() {
-    return IconButton(
-      icon: Icon(
-        _isFullscreen
-            ? Icons.fullscreen_exit_rounded
-            : Icons.fullscreen_rounded,
-        color: Colors.white,
-        size: 24,
+    return SizedBox(
+      width: 48,
+      height: 48,
+      child: IconButton(
+        icon: Icon(
+          _isFullscreen
+              ? Icons.fullscreen_exit_rounded
+              : Icons.fullscreen_rounded,
+          color: Colors.white,
+          size: 24,
+        ),
+        padding: EdgeInsets.zero,
+        onPressed: _toggleFullscreen,
       ),
-      onPressed: _toggleFullscreen,
     );
   }
 
