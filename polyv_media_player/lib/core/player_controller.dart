@@ -651,6 +651,11 @@ class PlayerController extends ChangeNotifier {
 
   /// 处理播放完成
   void _handleCompleted() {
+    // 清除当前视频的播放进度，以便下次从头开始播放
+    final vid = _state.vid;
+    if (vid != null && vid.isNotEmpty) {
+      VideoProgressService.clearProgress(vid);
+    }
     _updateState(_state.copyWith(loadingState: PlayerLoadingState.completed));
   }
 
