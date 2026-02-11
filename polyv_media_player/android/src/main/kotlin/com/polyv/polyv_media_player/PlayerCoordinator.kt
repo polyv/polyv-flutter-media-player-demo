@@ -183,10 +183,6 @@ internal class PlayerCoordinator(
                 plvPlayer.getStateListenerRegistry().playingState.value == PLVMediaPlayerPlayingState.PLAYING
             }
 
-            if (!wasAlreadyChanging && isPlaying) {
-                plvPlayer.pause()
-            }
-
             val currentPosition = if (wasAlreadyChanging && pendingSeekPositionAfterQualityChange != null) {
                 pendingSeekPositionAfterQualityChange!!  // 保留原始位置
             } else {
@@ -203,10 +199,16 @@ internal class PlayerCoordinator(
                 "setQuality: index=$index, targetBitRate=${targetBitRate.name}, currentPosition=$currentPosition, isPlaying=$isPlaying, wasAlreadyChanging=$wasAlreadyChanging, generation=$qualityChangeGeneration"
             )
 
+            // ⚠️ 必须在 pause()/changeBitRate() 之前设置 guard！
+            // 否则 pause() 触发的 paused 事件会泄漏到 Flutter
             pendingSeekPositionAfterQualityChange = currentPosition
             pendingAutoPlayAfterQualityChange = isPlaying
             isChangingBitRate = true
             targetBitRateName = targetBitRate.name
+
+            if (!wasAlreadyChanging && isPlaying) {
+                plvPlayer.pause()
+            }
 
             plvPlayer.changeBitRate(targetBitRate)
 

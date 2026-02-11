@@ -71,6 +71,12 @@ class PlayerController extends ChangeNotifier {
   /// 是否正在切换视频（用于忽略切换期间的进度更新）
   bool _isSwitchingVideo = false;
 
+  /// 是否正在切换清晰度（用于冻结进度、防止 position 被重置为 0）
+  bool _isSwitchingQuality = false;
+  Timer? _qualityFreezeTimer;
+  /// 切换清晰度前的播放位置（作为安全网，拒绝大幅向后跳动）
+  int? _frozenPosition;
+
   /// 播放意图状态：基于用户操作（play/pause/stop）而非 SDK 的瞬态回调。
   /// 切换清晰度不会改变此值，从而保证图标始终正确。
   bool _playbackIntentPlaying = false;
@@ -243,10 +249,12 @@ class PlayerController extends ChangeNotifier {
     // 这样做可以确保切换清晰度期间 SDK 发送的中间状态
     // （buffering→paused→playing 等）不会影响图标。
 
-    // 终端事件（completed/error）需要重置意图
+    // 终端事件（completed/error）需要重置意图和切换标志
     if (newState == PlayerLoadingState.completed ||
         newState == PlayerLoadingState.error) {
       _playbackIntentPlaying = false;
+      _isSwitchingQuality = false;
+      _qualityFreezeTimer?.cancel();
     }
 
     // 当视频准备完成时，清除切换标志并尝试恢复之前保存的播放进度
@@ -299,6 +307,25 @@ class PlayerController extends ChangeNotifier {
     final position = data['position'] as int? ?? 0;
     final duration = data['duration'] as int? ?? _state.duration;
     final buffered = data['bufferedPosition'] as int? ?? 0;
+
+    // 第一层：切换清晰度前 3 秒内，无条件冻结进度
+    if (_isSwitchingQuality) {
+      print('[PlayerController] ⚠️ PROGRESS FROZEN (timer): pos=$position, dur=$duration');
+      return;
+    }
+
+    // 第二层：定时器到期后，仍然拒绝大幅向后跳动的位置
+    // 比如 HD→流畅切换需要 >3秒，定时器已过期但新流还在从头播放
+    final frozen = _frozenPosition;
+    if (frozen != null && frozen > 5000 && position < frozen - 5000) {
+      print('[PlayerController] ⚠️ PROGRESS FROZEN (position safety): pos=$position, frozen=$frozen');
+      return;
+    }
+    // 位置已恢复正常，清除安全网
+    if (_frozenPosition != null) {
+      print('[PlayerController] ✅ PROGRESS UNFROZEN: pos=$position, was frozen at $frozen');
+      _frozenPosition = null;
+    }
 
     _updateState(
       _state.copyWith(
@@ -681,6 +708,10 @@ class PlayerController extends ChangeNotifier {
   /// 更新状态并通知监听者
   void _updateState(PlayerState newState) {
     if (_state != newState) {
+      // 调试：检测 position 大幅下降
+      if (newState.position < _state.position - 3000 && _state.position > 3000) {
+        print('[PlayerController] ❌ POSITION DROP: ${_state.position} -> ${newState.position}, loadingState: ${newState.loadingState}, isSwitchingQuality: $_isSwitchingQuality');
+      }
       _state = newState;
       notifyListeners();
     }
@@ -749,6 +780,9 @@ class PlayerController extends ChangeNotifier {
 
       // 设置播放意图（基于 autoPlay 参数）
       _playbackIntentPlaying = autoPlay;
+
+      // 加载新视频时清除清晰度切换的位置冻结
+      _frozenPosition = null;
 
       // 使用 copyWith 保留当前倍速状态，但重置 position/duration/bufferedPosition
       // 稍后会尝试恢复保存的播放进度
@@ -881,6 +915,7 @@ class PlayerController extends ChangeNotifier {
   ///
   /// [index] 清晰度索引
   /// 注意：切换期间不会改变 [effectiveIsPlaying]，图标保持不变。
+  /// 切换期间进度会被冻结，不会被重置。
   Future<void> setQuality(int index) async {
     if (index < 0 || index >= _qualities.length) {
       throw PlayerException.unsupportedOperation(
@@ -888,9 +923,17 @@ class PlayerController extends ChangeNotifier {
       );
     }
 
+    _isSwitchingQuality = true;
+    _frozenPosition = _state.position; // Set _frozenPosition in setQuality
+    _qualityFreezeTimer?.cancel();
+    _qualityFreezeTimer = Timer(const Duration(seconds: 3), () {
+      _isSwitchingQuality = false;
+    });
+
     try {
       await MethodChannelHandler.setQuality(_methodChannel, index);
     } on PlatformException catch (e) {
+      _isSwitchingQuality = false;
       throw PlayerException.fromPlatformException(e);
     }
   }
@@ -1003,6 +1046,7 @@ class PlayerController extends ChangeNotifier {
       );
     });
 
+    _qualityFreezeTimer?.cancel();
     _eventSubscription?.cancel();
     _methodChannel.setMethodCallHandler(null);
     super.dispose();
