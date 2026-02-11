@@ -202,7 +202,7 @@ class _LongVideoPageState extends State<LongVideoPage> {
     if (!mounted) return;
 
     final state = _controller.state;
-    final isPlaying = state.isPlaying;
+    final isPlaying = _controller.effectiveIsPlaying;
     final isCompleted = state.loadingState == PlayerLoadingState.completed;
 
     // 检测播放结束
@@ -216,7 +216,7 @@ class _LongVideoPageState extends State<LongVideoPage> {
       return;
     }
 
-    // 同步播放状态（无论是否正在切换视频，都需要同步）
+    // 同步播放状态
     if (_isPlaying != isPlaying) {
       setState(() {
         _isPlaying = isPlaying;
@@ -314,7 +314,7 @@ class _LongVideoPageState extends State<LongVideoPage> {
 
       if (mounted) {
         setState(() {
-          _isPlaying = _controller.state.isPlaying;
+          _isPlaying = _controller.effectiveIsPlaying;
           _isEnded = false;
         });
       }
@@ -443,7 +443,7 @@ class _LongVideoPageState extends State<LongVideoPage> {
           if (mounted) {
             setState(() {
               _isInitialLoading = false;
-              _isPlaying = _controller.state.isPlaying;
+              _isPlaying = _controller.effectiveIsPlaying;
             });
             // 第一个视频加载完成，但控制条保持隐藏直到用户交互
             // 状态机保持在 hidden 模式
@@ -545,7 +545,7 @@ class _LongVideoPageState extends State<LongVideoPage> {
       if (mounted) {
         setState(() {
           _isSwitchingVideo = false;
-          _isPlaying = _controller.state.isPlaying;
+          _isPlaying = _controller.effectiveIsPlaying;
           _isEnded = false;
         });
         // 恢复用户交互状态，避免需要点两下

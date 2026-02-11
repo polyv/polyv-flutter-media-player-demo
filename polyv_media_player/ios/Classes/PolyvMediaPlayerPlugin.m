@@ -53,6 +53,8 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 @property (nonatomic, strong) PLVVideoViewController *videoViewController; // 改为 strong，防止被提前释放
 @property (nonatomic, assign) NSInteger currentQualityIndex; // 当前清晰度索引
 @property (nonatomic, strong) PLVVodMediaVideo *currentVideo; // 当前视频对象，用于获取清晰度信息
+@property (nonatomic, assign) BOOL isChangingQuality; // 是否正在切换清晰度
+@property (nonatomic, assign) BOOL wasPlayingBeforeQualityChange; // 切换前是否在播放
 @property (nonatomic, assign) NSInteger qualitySwitchOperationId;
 @property (nonatomic, assign) BOOL shouldSeekToStartOnPrepared;
 // 记录当前设备方向，避免重复处理
@@ -695,6 +697,13 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     NSInteger sdkIndex = index + 1;
     PLVVodMediaQuality quality = (PLVVodMediaQuality)sdkIndex;
 
+    // 记录切换前的播放状态，设置 guard 标志
+    self.wasPlayingBeforeQualityChange =
+        (self.player.playbackState == PLVPlaybackStatePlaying);
+    self.isChangingQuality = YES;
+    NSLog(@"[PolyvPlugin] Quality change started, wasPlaying: %@",
+          self.wasPlayingBeforeQualityChange ? @"YES" : @"NO");
+
     // 调用 SDK 的 setPlayQuality: 方法
     // SDK 内部会自动处理续播、URL 切换等
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -1077,6 +1086,10 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 #pragma mark - Helper Methods
 
 - (void)clearPlayer {
+    // 重置清晰度切换标志
+    self.isChangingQuality = NO;
+    self.wasPlayingBeforeQualityChange = NO;
+
     // 清理播放器资源，但不置nil（使用lazy getter模式）
     if (_player) {
         [self.playerSession clearPlayer];
@@ -1182,7 +1195,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 }
 
 - (void)plvMediaPlayerCore:(PLVMediaPlayerCore *)player playerIsPreparedToPlay:(BOOL)prepared {
-    if (prepared) {
+    if (prepared && !self.isChangingQuality) {
         [self sendStateChangeEvent:kStatePrepared];
 
         // 发送字幕列表事件（与 Android 保持一致，在 onPrepared 时发送）
@@ -1200,6 +1213,25 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 }
 
 - (void)plvMediaPlayerCore:(PLVMediaPlayerCore *)player playerLoadStateDidChange:(PLVPlayerLoadState)loadState {
+    // 清晰度切换期间，不发送任何中间状态事件
+    if (self.isChangingQuality) {
+        if (loadState & (PLVPlayerLoadStatePlayable | PLVPlayerLoadStatePlaythroughOK)) {
+            NSLog(@"[PolyvPlugin] Stream playable during quality change, sending final state");
+            BOOL wasPlaying = self.wasPlayingBeforeQualityChange;
+            // 延迟重置标志，确保 seek/play/pause 触发的中间回调也被拦截
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self.isChangingQuality = NO;
+                [self sendStateChangeEvent:wasPlaying ? kStatePlaying : kStatePaused];
+                NSLog(@"[PolyvPlugin] Quality change completed, final state: %@",
+                      wasPlaying ? @"playing" : @"paused");
+            });
+        } else {
+            NSLog(@"[PolyvPlugin] playerLoadStateDidChange: ignoring loadState=%lu during quality change",
+                  (unsigned long)loadState);
+        }
+        return;
+    }
+
     if (loadState & PLVPlayerLoadStateStalled) {
         [self sendStateChangeEvent:kStateBuffering];
         return;
@@ -1214,6 +1246,13 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 }
 
 - (void)plvMediaPlayerCore:(PLVMediaPlayerCore *)player playerPlaybackStateDidChange:(PLVPlaybackState)playbackState {
+    // 清晰度切换期间，不发送中间状态事件
+    if (self.isChangingQuality) {
+        NSLog(@"[PolyvPlugin] playerPlaybackStateDidChange: ignoring state=%ld during quality change",
+              (long)playbackState);
+        return;
+    }
+
     switch (playbackState) {
         case PLVPlaybackStatePlaying:
             [self sendStateChangeEvent:kStatePlaying];

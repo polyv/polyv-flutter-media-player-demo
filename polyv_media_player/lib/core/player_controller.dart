@@ -71,6 +71,14 @@ class PlayerController extends ChangeNotifier {
   /// 是否正在切换视频（用于忽略切换期间的进度更新）
   bool _isSwitchingVideo = false;
 
+  /// 播放意图状态：基于用户操作（play/pause/stop）而非 SDK 的瞬态回调。
+  /// 切换清晰度不会改变此值，从而保证图标始终正确。
+  bool _playbackIntentPlaying = false;
+
+  /// 播放意图是否为"正在播放"。
+  /// UI 的播放/暂停图标应使用此值，而非 [state.isPlaying]。
+  bool get effectiveIsPlaying => _playbackIntentPlaying;
+
   /// 获取当前播放器状态
   PlayerState get state => _state;
 
@@ -226,9 +234,20 @@ class PlayerController extends ChangeNotifier {
     final stateStr = data['state']?.toString();
     final newState = _parseLoadingState(stateStr);
 
-    PlvLogger.d('[PlayerController] _handleStateChanged: $stateStr -> $newState, hasRestored: $_hasRestoredProgress');
+    PlvLogger.d('[PlayerController] _handleStateChanged: $stateStr -> $newState, hasRestored: $_hasRestoredProgress, intent: $_playbackIntentPlaying');
 
     _updateState(_state.copyWith(loadingState: newState));
+
+    // 注意：此处不同步 _playbackIntentPlaying。
+    // 播放意图仅由显式动作设置：play()/pause()/stop()/loadVideo(autoPlay)。
+    // 这样做可以确保切换清晰度期间 SDK 发送的中间状态
+    // （buffering→paused→playing 等）不会影响图标。
+
+    // 终端事件（completed/error）需要重置意图
+    if (newState == PlayerLoadingState.completed ||
+        newState == PlayerLoadingState.error) {
+      _playbackIntentPlaying = false;
+    }
 
     // 当视频准备完成时，清除切换标志并尝试恢复之前保存的播放进度
     // 必须在 prepared 状态时恢复，因为原生层在 prepared 之后会 seek 到 0
@@ -728,6 +747,9 @@ class PlayerController extends ChangeNotifier {
       // 设置切换标志，忽略切换期间的进度更新
       _isSwitchingVideo = true;
 
+      // 设置播放意图（基于 autoPlay 参数）
+      _playbackIntentPlaying = autoPlay;
+
       // 使用 copyWith 保留当前倍速状态，但重置 position/duration/bufferedPosition
       // 稍后会尝试恢复保存的播放进度
       _updateState(_state.copyWith(
@@ -781,6 +803,8 @@ class PlayerController extends ChangeNotifier {
 
   /// 播放
   Future<void> play() async {
+    _playbackIntentPlaying = true;
+    notifyListeners(); // 立即更新图标
     try {
       await MethodChannelHandler.play(_methodChannel);
     } on PlatformException catch (e) {
@@ -790,6 +814,8 @@ class PlayerController extends ChangeNotifier {
 
   /// 暂停
   Future<void> pause() async {
+    _playbackIntentPlaying = false;
+    notifyListeners(); // 立即更新图标
     try {
       await MethodChannelHandler.pause(_methodChannel);
     } on PlatformException catch (e) {
@@ -799,6 +825,7 @@ class PlayerController extends ChangeNotifier {
 
   /// 停止
   Future<void> stop() async {
+    _playbackIntentPlaying = false;
     try {
       await MethodChannelHandler.stop(_methodChannel);
       // 保持 vid，只重置状态和进度
@@ -853,6 +880,7 @@ class PlayerController extends ChangeNotifier {
   /// 切换清晰度
   ///
   /// [index] 清晰度索引
+  /// 注意：切换期间不会改变 [effectiveIsPlaying]，图标保持不变。
   Future<void> setQuality(int index) async {
     if (index < 0 || index >= _qualities.length) {
       throw PlayerException.unsupportedOperation(

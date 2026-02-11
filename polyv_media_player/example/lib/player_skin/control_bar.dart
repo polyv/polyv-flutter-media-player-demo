@@ -70,7 +70,7 @@ class ControlBar extends StatelessWidget {
 
   /// 播放/暂停按钮
   Widget _buildPlayPauseButton() {
-    final isPlaying = controller.state.isPlaying;
+    final isPlaying = controller.effectiveIsPlaying;
     final isPrepared = controller.state.isPrepared;
 
     return IconButton(

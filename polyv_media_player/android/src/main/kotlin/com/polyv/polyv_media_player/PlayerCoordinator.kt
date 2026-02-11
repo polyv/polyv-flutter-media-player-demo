@@ -34,6 +34,7 @@ internal class PlayerCoordinator(
     private var isChangingBitRate: Boolean = false
     private var targetBitRateName: String? = null
     private var lastKnownDurationMs: Long = 0L
+    private var qualityChangeGeneration: Int = 0  // 用于使旧的 postDelayed 失效
 
     fun ensurePlayer(): PLVMediaPlayer {
         val existing = getPlayer()
@@ -68,6 +69,7 @@ internal class PlayerCoordinator(
         pendingSeekPositionAfterQualityChange = null
         pendingAutoPlayAfterQualityChange = false
         lastKnownDurationMs = 0L
+        qualityChangeGeneration++
     }
 
     fun handlePlay(result: Result) {
@@ -172,19 +174,33 @@ internal class PlayerCoordinator(
         }
 
         try {
-            val isPlaying =
+            // 如果已经在切换清晰度，保留原始的播放状态（而不是读 SDK 当前状态，
+            // 因为上一次 handleSetQuality 已经 pause() 了播放器）
+            val wasAlreadyChanging = isChangingBitRate
+            val isPlaying = if (wasAlreadyChanging) {
+                pendingAutoPlayAfterQualityChange  // 保留之前记录的真实播放意图
+            } else {
                 plvPlayer.getStateListenerRegistry().playingState.value == PLVMediaPlayerPlayingState.PLAYING
+            }
 
-            if (isPlaying) {
+            if (!wasAlreadyChanging && isPlaying) {
                 plvPlayer.pause()
             }
 
-            val currentPosition = plvPlayer.getStateListenerRegistry().progressState.value ?: 0L
+            val currentPosition = if (wasAlreadyChanging && pendingSeekPositionAfterQualityChange != null) {
+                pendingSeekPositionAfterQualityChange!!  // 保留原始位置
+            } else {
+                plvPlayer.getStateListenerRegistry().progressState.value ?: 0L
+            }
 
             val targetBitRate = bitRates[index]
+
+            // 递增 generation，使旧的 postDelayed 回调失效
+            qualityChangeGeneration++
+
             android.util.Log.d(
                 "PolyvMediaPlayerPlugin",
-                "setQuality: index=$index, targetBitRate=${targetBitRate.name}, currentPosition=$currentPosition, isPlaying=$isPlaying"
+                "setQuality: index=$index, targetBitRate=${targetBitRate.name}, currentPosition=$currentPosition, isPlaying=$isPlaying, wasAlreadyChanging=$wasAlreadyChanging, generation=$qualityChangeGeneration"
             )
 
             pendingSeekPositionAfterQualityChange = currentPosition
@@ -211,7 +227,9 @@ internal class PlayerCoordinator(
         observers.clear()
 
         plvPlayer.getEventListenerRegistry().onPrepared.observe {
-            playbackEventEmitter.sendStateChange(statePrepared)
+            if (!isChangingBitRate) {
+                playbackEventEmitter.sendStateChange(statePrepared)
+            }
             val bitRates = plvPlayer.getBusinessListenerRegistry().supportMediaBitRates.value
             android.util.Log.d(
                 "PolyvMediaPlayerPlugin",
@@ -227,6 +245,7 @@ internal class PlayerCoordinator(
         }.addTo(observers)
 
         plvPlayer.getEventListenerRegistry().onInfo.observe { event ->
+            if (isChangingBitRate) return@observe
             when (event.what) {
                 PLVMediaPlayerOnInfoEvent.MEDIA_INFO_BUFFERING_START -> playbackEventEmitter.sendStateChange(stateBuffering)
 
@@ -251,6 +270,8 @@ internal class PlayerCoordinator(
         }.addTo(observers)
 
         plvPlayer.getStateListenerRegistry().playingState.observe { playingState ->
+            // 清晰度切换期间，不发送中间状态事件
+            if (isChangingBitRate) return@observe
             when (playingState) {
                 PLVMediaPlayerPlayingState.PLAYING -> playbackEventEmitter.sendStateChange(statePlaying)
                 else -> playbackEventEmitter.sendStateChange(statePaused)
@@ -304,16 +325,28 @@ internal class PlayerCoordinator(
                     val pendingSeek = pendingSeekPositionAfterQualityChange!!
                     val duration = plvPlayer.getStateListenerRegistry().durationState.value ?: 0L
                     val clampedPosition = pendingSeek.coerceIn(0L, duration)
+                    val capturedGeneration = qualityChangeGeneration  // 捕获当前 generation
 
                     android.util.Log.d(
                         "PolyvMediaPlayerPlugin",
-                        "Target quality matched: ${bitRate.name}, restoring position: $clampedPosition, autoPlay=$pendingAutoPlayAfterQualityChange"
+                        "Target quality matched: ${bitRate.name}, restoring position: $clampedPosition, autoPlay=$pendingAutoPlayAfterQualityChange, generation=$capturedGeneration"
                     )
 
                     mainHandler.postDelayed({
+                        // 如果 generation 已经变了，说明有新的切换请求，放弃此次恢复
+                        if (capturedGeneration != qualityChangeGeneration) {
+                            android.util.Log.d(
+                                "PolyvMediaPlayerPlugin",
+                                "Quality change generation mismatch ($capturedGeneration vs $qualityChangeGeneration), skipping restore"
+                            )
+                            return@postDelayed
+                        }
+
+                        val autoPlay = pendingAutoPlayAfterQualityChange
+
                         try {
                             plvPlayer.seek(clampedPosition)
-                            if (pendingAutoPlayAfterQualityChange) {
+                            if (autoPlay) {
                                 plvPlayer.start()
                             } else {
                                 plvPlayer.pause()
@@ -324,11 +357,25 @@ internal class PlayerCoordinator(
                                 "Failed to restore position after quality change",
                                 t
                             )
-                        } finally {
-                            isChangingBitRate = false
-                            targetBitRateName = null
-                            pendingSeekPositionAfterQualityChange = null
-                            pendingAutoPlayAfterQualityChange = false
+                        }
+
+                        // guard 仍然开着，先发送最终状态
+                        val finalState = if (autoPlay) statePlaying else statePaused
+                        playbackEventEmitter.sendStateChange(finalState)
+
+                        // 延迟重置 guard 到下一个主线程循环
+                        // 这样 seek/start/pause 触发的同步回调在本轮循环中仍被拦截
+                        mainHandler.post {
+                            if (capturedGeneration == qualityChangeGeneration) {
+                                isChangingBitRate = false
+                                targetBitRateName = null
+                                pendingSeekPositionAfterQualityChange = null
+                                pendingAutoPlayAfterQualityChange = false
+                                android.util.Log.d(
+                                    "PolyvMediaPlayerPlugin",
+                                    "Quality change guard released, generation=$capturedGeneration"
+                                )
+                            }
                         }
                     }, 300)
                 }
