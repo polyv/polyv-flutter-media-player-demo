@@ -1734,7 +1734,9 @@ class _VideoProgressBarState extends State<_VideoProgressBar> {
               // 只在 2 秒内的更新中检查，且总时长有效
               if (dt < const Duration(seconds: 2) && durationMs > 0) {
                 final deltaMs = (last - clampedProgress).abs() * durationMs;
-                if (clampedProgress < last && deltaMs > 1000) {
+                // 检测是否是重播操作：如果新进度接近 0%，说明是合法的重播/seek到开头
+                final isReplayToStart = clampedProgress < 0.01;
+                if (clampedProgress < last && deltaMs > 1000 && !isReplayToStart) {
                   isSuspiciousBackwardJump = true;
                 }
               }
