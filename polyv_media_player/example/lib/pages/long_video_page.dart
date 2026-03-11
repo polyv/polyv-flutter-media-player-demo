@@ -263,10 +263,16 @@ class _LongVideoPageState extends State<LongVideoPage> {
       return;
     }
 
-    // 场景1&2: 只显示控制栏，不切换播放/暂停
+    // 场景1&2: 只显示/隐藏控制栏，不切换播放/暂停
     // （播放/暂停由控制栏按钮控制）
 
-    // 场景3&4: 显示控制栏并重置自动隐藏计时器
+    // 场景3: 控制栏已显示时，再次点击立即隐藏
+    if (_controlBarStateMachine.isVisible(_isPlaying)) {
+      _controlBarStateMachine.enterPassive();
+      return;
+    }
+
+    // 场景4: 控制栏隐藏时，显示控制栏并启动自动隐藏计时器
     if (!_hasUserInteracted) {
       _hasUserInteracted = true;
     }
