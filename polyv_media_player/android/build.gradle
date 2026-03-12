@@ -18,14 +18,11 @@ allprojects {
     repositories {
         maven { url 'https://maven.aliyun.com/repository/google' }
         mavenCentral()
+        // Polyv SDK 私有仓库（凭据已内置，用户无需配置）
         maven {
-            def polyvRepoUser = project.findProperty('polyvRepoUser') ?: ''
-            def polyvRepoPassword = project.findProperty('polyvRepoPassword') ?: ''
-            if (polyvRepoUser && polyvRepoPassword) {
-                credentials {
-                    username = polyvRepoUser
-                    password = polyvRepoPassword
-                }
+            credentials {
+                username = '609cc5623a10edbf36da9615'
+                password = 'EbkbzTNHRJ=P'
             }
             url = uri('https://packages.aliyun.com/maven/repository/2102846-release-8EVsoM/')
         }
