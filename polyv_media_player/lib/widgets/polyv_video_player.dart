@@ -143,6 +143,11 @@ class PolyvVideoPlayer extends StatefulWidget {
   /// 播放错误回调
   final ValueChanged<String>? onError;
 
+  /// 视频视图的 key seed，用于强制重建视频视图
+  ///
+  /// 当这个值改变时，视频视图会被完全重建，清除旧画面
+  final Object? videoViewKeySeed;
+
   const PolyvVideoPlayer({
     super.key,
     required this.vid,
@@ -171,6 +176,7 @@ class PolyvVideoPlayer extends StatefulWidget {
     this.onPlayingChanged,
     this.onCompleted,
     this.onError,
+    this.videoViewKeySeed,
   });
 
   @override
@@ -285,7 +291,22 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
 
     // 如果 VID 变化，重新加载视频
     if (oldWidget.vid != widget.vid) {
-      _loadVideo();
+      // 立即隐藏控制条，防止闪烁
+      _controlBarStateMachine.enterHidden();
+      setState(() {
+        _isLoaded = false;
+      });
+      // 延迟加载，等待外部黑色遮罩渲染完成
+      _loadVideoWithDelay();
+    }
+  }
+
+  /// 延迟加载视频，等待黑色遮罩渲染完成
+  Future<void> _loadVideoWithDelay() async {
+    // 等待黑色遮罩渲染完成
+    await Future.delayed(const Duration(milliseconds: 100));
+    if (mounted) {
+      await _loadVideo();
     }
   }
 
@@ -316,8 +337,9 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         });
         widget.onLoaded?.call();
 
-        // 视频加载完成，进入被动模式
-        _controlBarStateMachine.enterPassive();
+        // 视频加载完成，保持隐藏模式
+        // 控制条只在用户点击时才显示
+        // _controlBarStateMachine.enterPassive();
       }
 
       // 加载弹幕数据
@@ -397,8 +419,15 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
   }
 
   void _handleDoubleTap() {
-    if (widget.enableDoubleTapFullscreen) {
-      widget.onFullscreenChanged?.call(true);
+    // 竖屏双击：暂停/播放视频（不再触发全屏）
+    if (_controller.state.isPrepared) {
+      // 使用 effectiveIsPlaying 获取更准确的播放状态
+      final isPlaying = _controller.effectiveIsPlaying;
+      if (isPlaying) {
+        _controller.pause();
+      } else {
+        _controller.play();
+      }
     }
   }
 
@@ -524,10 +553,23 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         aspectRatio: widget.aspectRatio,
         child: Stack(
           children: [
-            // 1. 视频视图（带手势检测）
+            // 1. 视频视图（不启用手势时包含点击处理）
             _buildVideoView(),
 
-            // 2. 弹幕层（可选）
+            // 2. 手势检测层（覆盖整个区域，仅在启用手势时添加）
+            if (widget.enableGestures && !_isEnded)
+              Positioned.fill(
+                child: PlayerGestureDetector(
+                  gestureController: _gestureController,
+                  playerController: _controller,
+                  onTap: _handleTap,
+                  onDoubleTap: _handleDoubleTap,
+                  isLocked: _isLocked,
+                  child: const SizedBox.shrink(),
+                ),
+              ),
+
+            // 3. 弹幕层（可选）
             if (widget.enableDanmaku && _isLoaded)
               ListenableBuilder(
                 listenable: _controller,
@@ -569,10 +611,7 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
                       ignoring: !isVisible,
                       child: GestureDetector(
                         // 点击控制栏区域时，隐藏控制栏（但让按钮点击优先）
-                        onTap: () {
-                          // 只有当点击的不是按钮时才隐藏
-                          // 这里我们让事件传递到按钮，如果按钮不处理则隐藏
-                        },
+                        onTap: _handleTap,
                         behavior: HitTestBehavior.deferToChild,
                         child: Align(
                           alignment: Alignment.bottomCenter,
@@ -584,32 +623,20 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
                 },
               ),
 
-            // 7. 顶层手势捕获（用于显示/隐藏控制栏）
-            if (widget.showControls && _isLoaded && !_isEnded)
+            // 7. 更多按钮（竖屏模式，右上角）
+            if (widget.showControls && widget.onMoreTap != null && _isLoaded)
               ListenableBuilder(
                 listenable: _controlBarStateMachine,
                 builder: (context, _) {
                   final isVisible = _controlBarStateMachine.isVisible(_isPlaying);
+                  if (!isVisible) return const SizedBox.shrink();
 
-                  // 当控制栏可见时，只覆盖视频区域（不包括底部控制栏）
-                  // 这样点击控制栏按钮不会触发隐藏
-                  if (isVisible) {
-                    return Positioned.fill(
-                      bottom: 80, // 控制栏高度，让底部按钮区域不被覆盖
-                      child: GestureDetector(
-                        onTap: _handleTap,
-                        behavior: HitTestBehavior.translucent,
-                        child: const SizedBox.expand(),
-                      ),
-                    );
-                  }
-
-                  // 当控制栏不可见时，覆盖整个区域
-                  return Positioned.fill(
-                    child: GestureDetector(
-                      onTap: _handleTap,
-                      behavior: HitTestBehavior.translucent,
-                      child: const SizedBox.expand(),
+                  return Positioned(
+                    top: 8,
+                    right: 8,
+                    child: IconButton(
+                      icon: const Icon(Icons.more_horiz_rounded, color: Colors.white),
+                      onPressed: widget.onMoreTap,
                     ),
                   );
                 },
@@ -632,9 +659,42 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         fit: StackFit.expand,
         children: [
           // 1. 视频视图
-          _buildFullscreenVideoView(),
+          PolyvVideoView(keySeed: widget.videoViewKeySeed),
 
-          // 2. 弹幕层
+          // 2. 手势检测层（覆盖整个区域，仅在未锁定时添加）
+          if (!_isLocked && widget.enableGestures && !_isEnded)
+            Positioned.fill(
+              child: PlayerGestureDetector(
+                gestureController: _gestureController,
+                playerController: _controller,
+                onTap: () {
+                  _controlBarStateMachine.toggle(isPlaying: _isPlaying);
+                },
+                onDoubleTap: () {
+                  if (_isPlaying) {
+                    _controller.pause();
+                  } else {
+                    _controller.play();
+                  }
+                },
+                isLocked: false,
+                child: const SizedBox.shrink(),
+              ),
+            ),
+
+          // 3. 锁定时的点击处理（只显示解锁按钮）
+          if (_isLocked)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () {
+                  _controlBarStateMachine.enterActive();
+                },
+                behavior: HitTestBehavior.translucent,
+                child: const SizedBox.shrink(),
+              ),
+            ),
+
+          // 4. 弹幕层
           if (widget.enableDanmaku && _isLoaded)
             ListenableBuilder(
               listenable: _controller,
@@ -649,22 +709,22 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
               },
             ),
 
-          // 3. 加载状态
+          // 5. 加载状态
           if (!_isLoaded && _error == null)
             const Center(
               child: CircularProgressIndicator(color: PlayerColors.progress),
             ),
 
-          // 4. 错误状态
+          // 6. 错误状态
           if (_error != null) _buildErrorWidget(),
 
-          // 5. 重播界面
+          // 7. 重播界面
           if (_isEnded) _buildReplayOverlay(),
 
-          // 6. 锁定状态：只显示解锁按钮
+          // 8. 锁定状态：只显示解锁按钮
           if (_isLocked) _buildLockedOverlay(),
 
-          // 7. 未锁定状态：显示完整控制层
+          // 9. 未锁定状态：显示完整控制层
           if (!_isLocked && widget.showControls && _isLoaded)
             ListenableBuilder(
               listenable: _controlBarStateMachine,
@@ -709,36 +769,6 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
             ),
         ],
       ),
-    );
-  }
-
-  /// 全屏模式视频视图
-  Widget _buildFullscreenVideoView() {
-    return GestureDetector(
-      onTap: () {
-        if (_isLocked) {
-          _controlBarStateMachine.enterPassive();
-          return;
-        }
-        if (_isEnded) {
-          setState(() => _isEnded = false);
-          _controller.replay();
-          _controlBarStateMachine.enterPassive();
-          return;
-        }
-        _controlBarStateMachine.toggle();
-      },
-      onDoubleTap: _isLocked
-          ? null
-          : () {
-              if (_isPlaying) {
-                _controller.pause();
-              } else {
-                _controller.play();
-              }
-            },
-      behavior: HitTestBehavior.translucent,
-      child: const PolyvVideoView(),
     );
   }
 
@@ -1049,26 +1079,20 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
   }
 
   Widget _buildVideoView() {
-    if (widget.enableGestures) {
-      return PlayerGestureDetector(
-        gestureController: _gestureController,
-        playerController: _controller,
+    // 视频视图现在只是 PolyvVideoView
+    // 手势检测由 Stack 中的 PlayerGestureDetector 层处理（如果启用）
+    // 如果不启用手势，需要在这里处理点击
+    if (!widget.enableGestures) {
+      return GestureDetector(
         onTap: _handleTap,
-        onDoubleTap: _handleDoubleTap,
-        isLocked: _isLocked,
-        child: const PolyvVideoView(),
+        onDoubleTap: widget.enableDoubleTapFullscreen
+            ? () => widget.onFullscreenChanged?.call(true)
+            : null,
+        behavior: HitTestBehavior.translucent,
+        child: PolyvVideoView(keySeed: widget.videoViewKeySeed),
       );
     }
-
-    // 不启用手势时，只处理点击
-    return GestureDetector(
-      onTap: _handleTap,
-      onDoubleTap: widget.enableDoubleTapFullscreen
-          ? () => widget.onFullscreenChanged?.call(true)
-          : null,
-      behavior: HitTestBehavior.translucent,
-      child: const PolyvVideoView(),
-    );
+    return PolyvVideoView(keySeed: widget.videoViewKeySeed);
   }
 
   Widget _buildErrorWidget() {

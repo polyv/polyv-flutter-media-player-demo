@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'player_gesture_controller.dart';
 import 'seek_preview_overlay.dart';
@@ -7,7 +6,7 @@ import 'seek_preview_overlay.dart';
 ///
 /// 统一处理视频播放区域的所有手势：
 /// - 单击：显示控制栏（不切换播放/暂停）
-/// - 双击：全屏切换
+/// - 双击：全屏切换或暂停/播放
 /// - 左右滑动：seek 进度
 class PlayerGestureDetector extends StatefulWidget {
   /// 子组件（通常是视频视图）
@@ -50,17 +49,8 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
   /// 重置标志的延迟时间
   static const Duration _resetDelay = Duration(milliseconds: 100);
 
-  /// 双击检测时间窗口（减少到 200ms 以提高单击响应速度）
-  static const Duration _doubleTapDelay = Duration(milliseconds: 200);
-
   /// 单击发生时记录，用于与滑动区分
   bool _hasSignificantPanMovement = false;
-
-  /// 上一次点击的时间戳（毫秒）
-  int? _lastTapTime;
-
-  /// 延迟确认单击的定时器
-  Timer? _singleTapTimer;
 
   /// 获取播放器时长（毫秒）
   int get _duration {
@@ -103,7 +93,6 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
 
   @override
   void dispose() {
-    _singleTapTimer?.cancel();
     try {
       widget.playerController?.removeListener(_onPlayerStateChanged);
     } catch (_) {
@@ -126,37 +115,11 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
     }
   }
 
-  /// 处理点击（自定义双击检测）
-  ///
-  /// 锁定状态下也允许点击，以便显示解锁按钮
+  /// 处理单击
   void _handleTap() {
-    if (_hasSignificantPanMovement) {
-      return;
-    }
-
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    // 检测双击
-    if (_lastTapTime != null &&
-        now - _lastTapTime! < _doubleTapDelay.inMilliseconds) {
-      // 双击：取消单击定时器，立即触发双击回调
-      _singleTapTimer?.cancel();
-      _lastTapTime = null;
-      if (!widget.isLocked) {
-        widget.onDoubleTap?.call();
-      }
-    } else {
-      // 可能是单击，启动延迟确认
-      _lastTapTime = now;
-      _singleTapTimer?.cancel();
-      _singleTapTimer = Timer(_doubleTapDelay, () {
-        // 延迟到期后，如果时间戳没有变化（没有新的点击），触发单击
-        if (_lastTapTime == now) {
-          widget.onTap?.call();
-          _lastTapTime = null;
-        }
-      });
-    }
+    // 重置滑动标志，确保点击总是能触发
+    _hasSignificantPanMovement = false;
+    widget.onTap?.call();
   }
 
   @override
@@ -165,10 +128,12 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
       builder: (context, constraints) {
         final screenSize = Size(constraints.maxWidth, constraints.maxHeight);
 
-        // 使用单个 GestureDetector 处理所有手势，避免嵌套冲突
+        // 使用 Flutter 原生的双击检测，避免延迟
         return GestureDetector(
-          // 点击手势（自定义双击检测）
+          // 单击手势
           onTap: widget.isLocked ? null : _handleTap,
+          // 双击手势（使用 Flutter 原生检测）
+          onDoubleTap: widget.isLocked ? null : widget.onDoubleTap,
           // 滑动手势
           onPanStart: widget.isLocked
               ? null

@@ -106,18 +106,20 @@ class ControlBarStateMachine extends ChangeNotifier {
     }
   }
 
-  /// 切换激活状态（用户点击屏幕）
+  /// 切换控制条可见性
   ///
-  /// 如果当前控制条可见，切换到隐藏模式；
-  /// 如果当前控制条不可见，切换到激活模式。
+  /// 简化逻辑：
+  /// - 如果控制条当前可见（无论什么模式），切换到 passive 模式（播放时隐藏）
+  /// - 如果控制条当前不可见，显示并开始自动隐藏计时
   void toggle({Duration? autoHideTimeout, bool isPlaying = false}) {
-    // 判断当前是否可见
+    // 基于实际可见状态判断
     final currentlyVisible = isVisible(isPlaying);
     if (currentlyVisible) {
-      // 当前可见，切换到隐藏模式
-      enterHidden();
+      // 当前可见，切换到 passive 模式
+      // passive 模式下：播放时隐藏，暂停时显示
+      enterPassive();
     } else {
-      // 当前不可见，切换到激活模式
+      // 当前不可见，显示并开始计时
       enterActive(autoHideTimeout: autoHideTimeout);
     }
   }

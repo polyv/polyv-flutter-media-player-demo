@@ -53,6 +53,9 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
   DateTime? _lastSwitchTime;
   static const int _debounceMs = 1000;
 
+  // 视频视图的 key seed，用于强制重建视频视图，清除旧画面
+  Object _videoViewKeySeed = Object();
+
   // DownloadCallbacks 实现
   @override
   DownloadTask? getTaskByVid(String vid) {
@@ -205,26 +208,52 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
     }
     if (_currentVideo?.vid == video.vid) return;
 
+    // 保存之前的视频，用于错误恢复
+    final previousVideo = _currentVideo;
+
+    // 1. 先设置切换状态，让黑色遮罩显示
     setState(() {
       _isSwitchingVideo = true;
       _lastSwitchTime = DateTime.now();
       _currentVideo = video;
     });
 
+    // 2. 等待黑色遮罩显示
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    // 3. 停止播放器
     _controller.stop();
-    await Future.delayed(const Duration(milliseconds: 100));
+
+    // 4. 改变 keySeed 强制重建视频视图，清除旧画面
+    _videoViewKeySeed = Object();
+
+    // 5. 等待播放器停止和视图重建
+    await Future.delayed(const Duration(milliseconds: 50));
 
     try {
+      // 6. 加载新视频
       await _controller.loadVideo(video.vid);
-      await Future.delayed(const Duration(milliseconds: 500));
 
+      // 7. 等待视频开始播放
+      await Future.delayed(const Duration(milliseconds: 700));
+
+      // 8. 切换完成，隐藏遮罩
       if (mounted) {
         setState(() => _isSwitchingVideo = false);
       }
     } catch (e) {
       PlvLogger.w('视频切换失败: $e');
-      if (mounted) {
-        setState(() => _isSwitchingVideo = false);
+
+      if (mounted && previousVideo != null) {
+        setState(() {
+          _isSwitchingVideo = false;
+          _currentVideo = previousVideo;
+        });
+
+        // 重新加载原视频
+        _controller.loadVideo(previousVideo.vid).catchError((error) {
+          PlvLogger.w('恢复原视频失败: $error');
+        });
       }
     }
   }
@@ -281,24 +310,33 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
         },
         child: Scaffold(
           backgroundColor: Colors.black,
-          body: PolyvVideoPlayer(
-            vid: _currentVideo?.vid ?? '',
-            controller: _controller,
-            isFullscreen: true,
-            showLockButton: true,
-            showDanmakuSend: true,
-            showTopBar: true,
-            videoTitle: _currentVideo?.title,
-            danmakuService: _danmakuService,
-            danmakuSendService: _danmakuSendService,
-            onBack: _toggleFullscreen,
-            onMoreTap: () => SettingsMenu.show(
-              context: context,
-              controller: _controller,
-              videoTitle: _currentVideo?.title,
-              videoThumbnail: _currentVideo?.thumbnail,
-              downloadCallbacks: this,
-            ),
+          body: Stack(
+            children: [
+              // 视频视图 - 始终渲染，用遮罩覆盖
+              PolyvVideoPlayer(
+                vid: _currentVideo?.vid ?? '',
+                controller: _controller,
+                videoViewKeySeed: _videoViewKeySeed,
+                isFullscreen: true,
+                showLockButton: true,
+                showDanmakuSend: true,
+                showTopBar: true,
+                videoTitle: _currentVideo?.title,
+                danmakuService: _danmakuService,
+                danmakuSendService: _danmakuSendService,
+                onBack: _toggleFullscreen,
+                onMoreTap: () => SettingsMenu.show(
+                  context: context,
+                  controller: _controller,
+                  videoTitle: _currentVideo?.title,
+                  videoThumbnail: _currentVideo?.thumbnail,
+                  downloadCallbacks: this,
+                ),
+              ),
+              // 切换视频时的黑色遮罩
+              if (_isSwitchingVideo)
+                Positioned.fill(child: Container(color: Colors.black)),
+            ],
           ),
         ),
       );
@@ -312,14 +350,30 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
           _buildTopBar(),
           AspectRatio(
             aspectRatio: 16 / 9,
-            child: PolyvVideoPlayer(
-              vid: _currentVideo?.vid ?? '',
-              controller: _controller,
-              enableDoubleTapFullscreen: true,
-              enableDanmaku: true,
-              onFullscreenChanged: (fs) {
-                if (fs && !_isFullscreen) _toggleFullscreen();
-              },
+            child: Stack(
+              children: [
+                // 视频视图 - 始终渲染，用遮罩覆盖
+                PolyvVideoPlayer(
+                  vid: _currentVideo?.vid ?? '',
+                  controller: _controller,
+                  videoViewKeySeed: _videoViewKeySeed,
+                  enableDoubleTapFullscreen: true,
+                  enableDanmaku: true,
+                  onFullscreenChanged: (fs) {
+                    if (fs && !_isFullscreen) _toggleFullscreen();
+                  },
+                  onMoreTap: () => SettingsMenu.show(
+                    context: context,
+                    controller: _controller,
+                    videoTitle: _currentVideo?.title,
+                    videoThumbnail: _currentVideo?.thumbnail,
+                    downloadCallbacks: this,
+                  ),
+                ),
+                // 切换视频时的黑色遮罩
+                if (_isSwitchingVideo)
+                  Positioned.fill(child: Container(color: Colors.black)),
+              ],
             ),
           ),
           _buildVideoInfo(),
@@ -372,9 +426,11 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
   }
 
   Widget _buildVideoInfo() {
-    return Container(
-      color: const Color(0xFF0F172A),
-      padding: const EdgeInsets.all(16),
+    return SizedBox(
+      width: double.infinity,
+      child: Container(
+        color: const Color(0xFF0F172A),
+        padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -398,6 +454,7 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
           ),
         ],
       ),
+    ),
     );
   }
 
