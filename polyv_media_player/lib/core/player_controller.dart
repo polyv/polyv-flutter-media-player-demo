@@ -927,15 +927,21 @@ class PlayerController extends ChangeNotifier {
       );
     }
 
+    // 保存当前播放位置，传递给原生层
+    final currentPosition = _state.position;
     _isSwitchingQuality = true;
-    _frozenPosition = _state.position; // Set _frozenPosition in setQuality
+    _frozenPosition = currentPosition;
     _qualityFreezeTimer?.cancel();
     _qualityFreezeTimer = Timer(const Duration(seconds: 3), () {
       _isSwitchingQuality = false;
     });
 
     try {
-      await MethodChannelHandler.setQuality(_methodChannel, index);
+      await MethodChannelHandler.setQuality(
+        _methodChannel,
+        index,
+        position: currentPosition,
+      );
     } on PlatformException catch (e) {
       _isSwitchingQuality = false;
       throw PlayerException.fromPlatformException(e);

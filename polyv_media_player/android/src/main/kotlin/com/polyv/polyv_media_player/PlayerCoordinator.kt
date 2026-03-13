@@ -161,6 +161,8 @@ internal class PlayerCoordinator(
 
         val args = call.arguments as? Map<*, *>
         val index = (args?.get("index") as? Number)?.toInt() ?: 0
+        // 从 Flutter 层获取播放位置（毫秒），如果未传递则从播放器获取
+        val flutterPosition = (args?.get("position") as? Number)?.toLong()
 
         val bitRates = plvPlayer.getBusinessListenerRegistry().supportMediaBitRates.value
         if (bitRates == null || bitRates.isEmpty()) {
@@ -183,8 +185,11 @@ internal class PlayerCoordinator(
                 plvPlayer.getStateListenerRegistry().playingState.value == PLVMediaPlayerPlayingState.PLAYING
             }
 
+            // 优先使用 Flutter 层传递的位置，这是最准确的
             val currentPosition = if (wasAlreadyChanging && pendingSeekPositionAfterQualityChange != null) {
                 pendingSeekPositionAfterQualityChange!!  // 保留原始位置
+            } else if (flutterPosition != null && flutterPosition > 0) {
+                flutterPosition  // 使用 Flutter 层传递的位置
             } else {
                 plvPlayer.getStateListenerRegistry().progressState.value ?: 0L
             }
@@ -196,7 +201,7 @@ internal class PlayerCoordinator(
 
             android.util.Log.d(
                 "PolyvMediaPlayerPlugin",
-                "setQuality: index=$index, targetBitRate=${targetBitRate.name}, currentPosition=$currentPosition, isPlaying=$isPlaying, wasAlreadyChanging=$wasAlreadyChanging, generation=$qualityChangeGeneration"
+                "setQuality: index=$index, targetBitRate=${targetBitRate.name}, flutterPosition=$flutterPosition, currentPosition=$currentPosition, isPlaying=$isPlaying, wasAlreadyChanging=$wasAlreadyChanging, generation=$qualityChangeGeneration"
             )
 
             // ⚠️ 必须在 pause()/changeBitRate() 之前设置 guard！

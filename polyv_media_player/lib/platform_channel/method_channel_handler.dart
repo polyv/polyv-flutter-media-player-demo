@@ -55,10 +55,14 @@ class MethodChannelHandler {
     );
   }
 
-  static Future<void> setQuality(MethodChannel channel, int index) {
+  static Future<void> setQuality(
+    MethodChannel channel,
+    int index, {
+    int? position,
+  }) {
     return channel.invokeMethod<void>(
       PlayerMethod.setQuality,
-      <String, dynamic>{'index': index},
+      <String, dynamic>{'index': index, 'position': position},
     );
   }
 

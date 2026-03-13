@@ -55,6 +55,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 @property (nonatomic, strong) PLVVodMediaVideo *currentVideo; // 当前视频对象，用于获取清晰度信息
 @property (nonatomic, assign) BOOL isChangingQuality; // 是否正在切换清晰度
 @property (nonatomic, assign) BOOL wasPlayingBeforeQualityChange; // 切换前是否在播放
+@property (nonatomic, assign) CGFloat positionBeforeQualityChange; // 切换前的播放位置（秒）
 @property (nonatomic, assign) NSInteger qualitySwitchOperationId;
 @property (nonatomic, assign) BOOL shouldSeekToStartOnPrepared;
 // 记录当前设备方向，避免重复处理
@@ -690,6 +691,9 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     }
 
     NSInteger index = [args[@"index"] integerValue];
+    // 从 Flutter 层获取播放位置（毫秒），优先使用 Flutter 层传递的位置
+    NSNumber *positionNumber = args[@"position"];
+    CGFloat flutterPosition = positionNumber ? [positionNumber floatValue] / 1000.0 : 0;
 
     // UI 层的索引需要 +1 来匹配 SDK 的枚举值（因为去掉了"自动"选项）
     // iOS SDK 的清晰度枚举: 0=自动, 1=流畅, 2=高清, 3=超清
@@ -697,12 +701,15 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     NSInteger sdkIndex = index + 1;
     PLVVodMediaQuality quality = (PLVVodMediaQuality)sdkIndex;
 
-    // 记录切换前的播放状态，设置 guard 标志
+    // 记录切换前的播放状态和位置，设置 guard 标志
     self.wasPlayingBeforeQualityChange =
         (self.player.playbackState == PLVPlaybackStatePlaying);
+    // 优先使用 Flutter 层传递的位置（这是最准确的，因为 Flutter 层已经冻结了进度）
+    self.positionBeforeQualityChange = (flutterPosition > 0) ? flutterPosition : self.player.currentPlaybackTime;
     self.isChangingQuality = YES;
-    NSLog(@"[PolyvPlugin] Quality change started, wasPlaying: %@",
-          self.wasPlayingBeforeQualityChange ? @"YES" : @"NO");
+    NSLog(@"[PolyvPlugin] Quality change started, wasPlaying: %@, flutterPosition: %.2f, playerPosition: %.2f, usingPosition: %.2f",
+          self.wasPlayingBeforeQualityChange ? @"YES" : @"NO",
+          flutterPosition, self.player.currentPlaybackTime, self.positionBeforeQualityChange);
 
     // 调用 SDK 的 setPlayQuality: 方法
     // SDK 内部会自动处理续播、URL 切换等
@@ -1089,6 +1096,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     // 重置清晰度切换标志
     self.isChangingQuality = NO;
     self.wasPlayingBeforeQualityChange = NO;
+    self.positionBeforeQualityChange = 0;
 
     // 清理播放器资源，但不置nil（使用lazy getter模式）
     if (_player) {
@@ -1216,14 +1224,26 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     // 清晰度切换期间，不发送任何中间状态事件
     if (self.isChangingQuality) {
         if (loadState & (PLVPlayerLoadStatePlayable | PLVPlayerLoadStatePlaythroughOK)) {
-            NSLog(@"[PolyvPlugin] Stream playable during quality change, sending final state");
+            NSLog(@"[PolyvPlugin] Stream playable during quality change, restoring position");
             BOOL wasPlaying = self.wasPlayingBeforeQualityChange;
+            CGFloat savedPosition = self.positionBeforeQualityChange;
+
             // 延迟重置标志，确保 seek/play/pause 触发的中间回调也被拦截
             dispatch_async(dispatch_get_main_queue(), ^{
+                // 先 seek 到保存的位置，再恢复播放状态
+                if (savedPosition > 0) {
+                    NSLog(@"[PolyvPlugin] Seeking to saved position: %.2f", savedPosition);
+                    [self.player seekToTime:savedPosition];
+                }
+
+                if (wasPlaying) {
+                    [self.player play];
+                }
+
                 self.isChangingQuality = NO;
                 [self sendStateChangeEvent:wasPlaying ? kStatePlaying : kStatePaused];
-                NSLog(@"[PolyvPlugin] Quality change completed, final state: %@",
-                      wasPlaying ? @"playing" : @"paused");
+                NSLog(@"[PolyvPlugin] Quality change completed, position: %.2f, final state: %@",
+                      savedPosition, wasPlaying ? @"playing" : @"paused");
             });
         } else {
             NSLog(@"[PolyvPlugin] playerLoadStateDidChange: ignoring loadState=%lu during quality change",

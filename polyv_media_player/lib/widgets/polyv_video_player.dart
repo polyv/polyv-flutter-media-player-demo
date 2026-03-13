@@ -502,8 +502,8 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         setState(() {
           _danmakus = [..._danmakus, newDanmaku];
         });
-
-        Navigator.of(context).pop();
+        // 注意：不在这里关闭弹幕输入覆盖层
+        // DanmakuInputOverlay._handleSend() 已经会调用 onClose 回调来关闭
       }
     } catch (e) {
       debugPrint('Failed to send danmaku: $e');
