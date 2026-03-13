@@ -108,12 +108,16 @@ class ControlBarStateMachine extends ChangeNotifier {
 
   /// 切换激活状态（用户点击屏幕）
   ///
-  /// 如果当前是激活模式，切换到被动模式；
-  /// 如果当前是被动或隐藏模式，切换到激活模式。
-  void toggle({Duration? autoHideTimeout}) {
-    if (_mode == ControlBarMode.active) {
-      enterPassive();
+  /// 如果当前控制条可见，切换到隐藏模式；
+  /// 如果当前控制条不可见，切换到激活模式。
+  void toggle({Duration? autoHideTimeout, bool isPlaying = false}) {
+    // 判断当前是否可见
+    final currentlyVisible = isVisible(isPlaying);
+    if (currentlyVisible) {
+      // 当前可见，切换到隐藏模式
+      enterHidden();
     } else {
+      // 当前不可见，切换到激活模式
       enterActive(autoHideTimeout: autoHideTimeout);
     }
   }

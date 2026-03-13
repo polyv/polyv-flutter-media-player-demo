@@ -1,22 +1,18 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:polyv_media_player/polyv_media_player.dart';
 import 'package:polyv_media_player/utils/plv_logger.dart';
 import 'package:provider/provider.dart';
-// Example 独有组件
 import '../pages/download_center/download_center_page.dart';
 import '../player_skin/video_list/video_list_view.dart' show VideoListView;
 
 /// LongVideoPage - 简化版长视频页面
 ///
-/// 使用 PolyvVideoPlayer 作为核心播放器组件，大幅简化代码。
-///
+/// 使用全功能 PolyvVideoPlayer 组件，页面代码约 200 行。
 /// 页面职责：
 /// - 视频列表管理
-/// - 全屏模式处理
+/// - 全屏模式切换
 /// - 弹幕服务注入
-/// - 视频切换逻辑
 class LongVideoPage extends StatefulWidget {
   final String? initialVid;
   final bool isOfflineMode;
@@ -36,10 +32,7 @@ class LongVideoPage extends StatefulWidget {
 }
 
 class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallbacks {
-  // 播放器控制器
   late final PlayerController _controller;
-
-  // 视频列表状态
   VideoListService? _videoListService;
   List<VideoItem> _videos = [];
   VideoItem? _currentVideo;
@@ -50,25 +43,15 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
   bool _hasMore = true;
   String? _listError;
 
-  // 初始加载状态
-  bool _isInitialLoading = true;
-
-  // 视频切换状态
-  bool _isSwitchingVideo = false;
-  DateTime? _lastSwitchTime;
-  static const int _debounceMs = 1000;
-
-  // 弹幕服务
   DanmakuService? _danmakuService;
   DanmakuSendService? _danmakuSendService;
   final PolyvConfigService _configService = PolyvConfigService();
-  final DanmakuSettings _danmakuSettings = DanmakuSettings();
 
-  // 全屏状态
   bool _isFullscreen = false;
-
-  // 配置服务
-  final PolyvConfigService _polyvConfigService = PolyvConfigService();
+  bool _isInitialLoading = true;
+  bool _isSwitchingVideo = false;
+  DateTime? _lastSwitchTime;
+  static const int _debounceMs = 1000;
 
   // DownloadCallbacks 实现
   @override
@@ -81,14 +64,11 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
   }
 
   @override
-  DownloadStateManager get stateManager {
-    return context.read<DownloadStateManager>();
-  }
+  DownloadStateManager get stateManager => context.read<DownloadStateManager>();
 
   @override
   void openDownloadCenter(int initialTabIndex) {
-    final navigator = Navigator.of(context, rootNavigator: true);
-    navigator.push(
+    Navigator.of(context, rootNavigator: true).push(
       DownloadCenterPage.route(initialTabIndex: initialTabIndex),
     );
   }
@@ -121,8 +101,6 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
         readToken: config.readToken,
         secretKey: config.secretKey,
       );
-
-      PlvLogger.d('LongVideoPage: Services initialized');
 
       if (widget.isOfflineMode && widget.initialVid != null) {
         _loadOfflineVideo(widget.initialVid!);
@@ -179,10 +157,8 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
               )
             : _videos.first;
 
-        setState(() {
-          _currentVideo = firstVideo;
-          _isInitialLoading = false;
-        });
+        _currentVideo = firstVideo;
+        setState(() => _isInitialLoading = false);
       }
     } catch (e) {
       PlvLogger.w('加载视频列表失败: $e');
@@ -212,12 +188,13 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
       thumbnail: widget.initialThumbnail ?? '',
     );
 
-    setState(() {
-      _currentVideo = tempVideo;
-      _videos = [tempVideo];
-      _isLoadingList = false;
-      _isInitialLoading = false;
-    });
+    _currentVideo = tempVideo;
+    _videos = [tempVideo];
+    _isLoadingList = false;
+
+    if (mounted) {
+      setState(() => _isInitialLoading = false);
+    }
   }
 
   Future<void> _onVideoTap(VideoItem video) async {
@@ -234,38 +211,38 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
       _currentVideo = video;
     });
 
-    await Future.delayed(const Duration(milliseconds: 500));
+    _controller.stop();
+    await Future.delayed(const Duration(milliseconds: 100));
 
-    if (mounted) {
-      setState(() => _isSwitchingVideo = false);
+    try {
+      await _controller.loadVideo(video.vid);
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      if (mounted) {
+        setState(() => _isSwitchingVideo = false);
+      }
+    } catch (e) {
+      PlvLogger.w('视频切换失败: $e');
+      if (mounted) {
+        setState(() => _isSwitchingVideo = false);
+      }
     }
   }
 
   Future<void> _toggleFullscreen() async {
-    setState(() => _isFullscreen = !_isFullscreen);
-
     if (_isFullscreen) {
+      await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    } else {
       await SystemChrome.setPreferredOrientations([
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
       ]);
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    } else {
-      await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
-  }
 
-  Future<void> _exitFullscreen() async {
-    if (!_isFullscreen) return;
-    await _toggleFullscreen();
-  }
-
-  void _showSnackBar(String message) {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      setState(() => _isFullscreen = !_isFullscreen);
     }
   }
 
@@ -274,7 +251,6 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _controller.dispose();
-    _danmakuSettings.dispose();
     super.dispose();
   }
 
@@ -296,21 +272,39 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
       );
     }
 
-    // 全屏模式
+    // 全屏模式：单个 PolyvVideoPlayer
     if (_isFullscreen) {
       return PopScope(
         canPop: false,
         onPopInvokedWithResult: (didPop, result) async {
-          if (!didPop) await _exitFullscreen();
+          if (!didPop) _toggleFullscreen();
         },
         child: Scaffold(
           backgroundColor: Colors.black,
-          body: _buildPlayerWithOverlay(),
+          body: PolyvVideoPlayer(
+            vid: _currentVideo?.vid ?? '',
+            controller: _controller,
+            isFullscreen: true,
+            showLockButton: true,
+            showDanmakuSend: true,
+            showTopBar: true,
+            videoTitle: _currentVideo?.title,
+            danmakuService: _danmakuService,
+            danmakuSendService: _danmakuSendService,
+            onBack: _toggleFullscreen,
+            onMoreTap: () => SettingsMenu.show(
+              context: context,
+              controller: _controller,
+              videoTitle: _currentVideo?.title,
+              videoThumbnail: _currentVideo?.thumbnail,
+              downloadCallbacks: this,
+            ),
+          ),
         ),
       );
     }
 
-    // 竖屏模式
+    // 竖屏模式：PolyvVideoPlayer + VideoList
     return Scaffold(
       backgroundColor: Colors.black,
       body: Column(
@@ -318,56 +312,20 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
           _buildTopBar(),
           AspectRatio(
             aspectRatio: 16 / 9,
-            child: _buildPlayerWithOverlay(),
+            child: PolyvVideoPlayer(
+              vid: _currentVideo?.vid ?? '',
+              controller: _controller,
+              enableDoubleTapFullscreen: true,
+              enableDanmaku: true,
+              onFullscreenChanged: (fs) {
+                if (fs && !_isFullscreen) _toggleFullscreen();
+              },
+            ),
           ),
           _buildVideoInfo(),
           Expanded(child: _buildVideoList()),
         ],
       ),
-    );
-  }
-
-  Widget _buildPlayerWithOverlay() {
-    return Stack(
-      children: [
-        // 核心播放器 - 使用 PolyvVideoPlayer
-        PolyvVideoPlayer(
-          vid: _currentVideo?.vid ?? '',
-          controller: _controller,
-          autoPlay: true,
-          enableDanmaku: true,
-          enableGestures: true,
-          enableDoubleTapFullscreen: false, // 由页面处理全屏
-          danmakuService: _danmakuService,
-          danmakuSettings: _danmakuSettings,
-          onFullscreenChanged: (isFullscreen) {
-            if (isFullscreen && !_isFullscreen) {
-              _toggleFullscreen();
-            }
-          },
-        ),
-
-        // 设置按钮（example 特有）
-        Positioned(
-          right: 8,
-          top: 8,
-          child: IconButton(
-            icon: const Icon(Icons.settings, color: Colors.white),
-            onPressed: _currentVideo != null
-                ? () => SettingsMenu.show(
-                    context: context,
-                    controller: _controller,
-                    videoTitle: _currentVideo!.title,
-                    downloadCallbacks: this,
-                  )
-                : null,
-          ),
-        ),
-
-        // 视频切换遮罩
-        if (_isSwitchingVideo)
-          Positioned.fill(child: Container(color: Colors.black)),
-      ],
     );
   }
 

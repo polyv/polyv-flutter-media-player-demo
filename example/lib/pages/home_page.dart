@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'download_center/download_center_page.dart';
-import 'long_video_page.dart';
+import 'long_video_page_simplified.dart';
 
 /// HomePage - 首页入口组件
 ///

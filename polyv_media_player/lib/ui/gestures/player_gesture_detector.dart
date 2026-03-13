@@ -1,5 +1,5 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import '../double_tap_detector.dart';
 import 'player_gesture_controller.dart';
 import 'seek_preview_overlay.dart';
 
@@ -50,8 +50,17 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
   /// 重置标志的延迟时间
   static const Duration _resetDelay = Duration(milliseconds: 100);
 
+  /// 双击检测时间窗口（减少到 200ms 以提高单击响应速度）
+  static const Duration _doubleTapDelay = Duration(milliseconds: 200);
+
   /// 单击发生时记录，用于与滑动区分
   bool _hasSignificantPanMovement = false;
+
+  /// 上一次点击的时间戳（毫秒）
+  int? _lastTapTime;
+
+  /// 延迟确认单击的定时器
+  Timer? _singleTapTimer;
 
   /// 获取播放器时长（毫秒）
   int get _duration {
@@ -94,6 +103,7 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
 
   @override
   void dispose() {
+    _singleTapTimer?.cancel();
     try {
       widget.playerController?.removeListener(_onPlayerStateChanged);
     } catch (_) {
@@ -116,19 +126,36 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
     }
   }
 
-  /// 处理点击（由 DoubleTapDetector 调用）
+  /// 处理点击（自定义双击检测）
   ///
   /// 锁定状态下也允许点击，以便显示解锁按钮
   void _handleTap() {
-    if (!_hasSignificantPanMovement) {
-      widget.onTap?.call();
+    if (_hasSignificantPanMovement) {
+      return;
     }
-  }
 
-  /// 处理双击（由 DoubleTapDetector 调用）
-  void _handleDoubleTap() {
-    if (!widget.isLocked) {
-      widget.onDoubleTap?.call();
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    // 检测双击
+    if (_lastTapTime != null &&
+        now - _lastTapTime! < _doubleTapDelay.inMilliseconds) {
+      // 双击：取消单击定时器，立即触发双击回调
+      _singleTapTimer?.cancel();
+      _lastTapTime = null;
+      if (!widget.isLocked) {
+        widget.onDoubleTap?.call();
+      }
+    } else {
+      // 可能是单击，启动延迟确认
+      _lastTapTime = now;
+      _singleTapTimer?.cancel();
+      _singleTapTimer = Timer(_doubleTapDelay, () {
+        // 延迟到期后，如果时间戳没有变化（没有新的点击），触发单击
+        if (_lastTapTime == now) {
+          widget.onTap?.call();
+          _lastTapTime = null;
+        }
+      });
     }
   }
 
@@ -138,16 +165,17 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
       builder: (context, constraints) {
         final screenSize = Size(constraints.maxWidth, constraints.maxHeight);
 
-        // 构建 Slider Detector（处理滑动手势）
-        final sliderDetector = GestureDetector(
-          // 滑动开始
+        // 使用单个 GestureDetector 处理所有手势，避免嵌套冲突
+        return GestureDetector(
+          // 点击手势（自定义双击检测）
+          onTap: widget.isLocked ? null : _handleTap,
+          // 滑动手势
           onPanStart: widget.isLocked
               ? null
               : (details) {
                   _hasSignificantPanMovement = false;
                   widget.gestureController.handleDragStart(details);
                 },
-          // 滑动更新
           onPanUpdate: widget.isLocked
               ? null
               : (details) {
@@ -165,7 +193,6 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
                     screenSize,
                   );
                 },
-          // 滑动结束
           onPanEnd: widget.isLocked
               ? null
               : (details) {
@@ -185,7 +212,6 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
                     }
                   });
                 },
-          // 滑动取消
           onPanCancel: widget.isLocked
               ? null
               : () {
@@ -200,7 +226,7 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
                     }
                   });
                 },
-          behavior: HitTestBehavior.translucent,
+          behavior: HitTestBehavior.opaque,
           child: Stack(
             children: [
               widget.child,
@@ -228,13 +254,6 @@ class _PlayerGestureDetectorState extends State<PlayerGestureDetector> {
               ),
             ],
           ),
-        );
-
-        // 使用 DoubleTapDetector 处理单击和双击（避免 GestureDetector 的 Timer 问题）
-        return DoubleTapDetector(
-          onTap: _handleTap,
-          onDoubleTap: _handleDoubleTap,
-          child: sliderDetector,
         );
       },
     );
