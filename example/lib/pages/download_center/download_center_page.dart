@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:polyv_media_player/polyv_media_player.dart';
 import 'downloading_task_item.dart';
-import '../long_video_page_simplified.dart' show LongVideoPage;
+import '../long_video_page.dart' show LongVideoPage;
 
 /// 下载中心页面
 ///

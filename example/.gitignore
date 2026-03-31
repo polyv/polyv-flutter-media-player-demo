@@ -47,3 +47,4 @@ app.*.map.json
 # Local configuration (DO NOT COMMIT - contains sensitive credentials)
 /lib/config/local_config.dart
 /local_props.dart
+bak

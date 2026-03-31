@@ -211,6 +211,15 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
   /// 弹幕发送中
   bool _isSendingDanmaku = false;
 
+  /// 视频切换中的黑色遮罩
+  bool _isSwitchingVideo = false;
+
+  /// 自动管理的视频视图 key seed（vid 变化时自动更新）
+  Object _internalKeySeed = Object();
+
+  /// 视频切换代数，用于使旧的延迟回调失效
+  int _switchGeneration = 0;
+
   /// 内部创建的弹幕服务
   DanmakuService? _ownedDanmakuService;
 
@@ -295,23 +304,30 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
   void didUpdateWidget(PolyvVideoPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // 如果 VID 变化，重新加载视频
-    if (oldWidget.vid != widget.vid) {
-      // 立即隐藏控制条，防止闪烁
+    // 如果 VID 变化，自动处理切换
+    if (oldWidget.vid != widget.vid && widget.vid.isNotEmpty) {
       _controlBarStateMachine.enterHidden();
+
+      // 停止当前播放
+      _controller.stop();
+
+      // 强制重建视频视图，清除旧画面
+      _internalKeySeed = Object();
+
       setState(() {
+        _isSwitchingVideo = true;
         _isLoaded = false;
       });
-      // 延迟加载，等待外部黑色遮罩渲染完成
+
       _loadVideoWithDelay();
     }
   }
 
   /// 延迟加载视频，等待黑色遮罩渲染完成
   Future<void> _loadVideoWithDelay() async {
-    // 等待黑色遮罩渲染完成
+    final generation = ++_switchGeneration;
     await Future.delayed(const Duration(milliseconds: 100));
-    if (mounted) {
+    if (mounted && generation == _switchGeneration) {
       await _loadVideo();
     }
   }
@@ -357,6 +373,16 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         });
         widget.onLoaded?.call();
 
+        // 视频切换：延迟隐藏遮罩，等待首帧渲染
+        if (_isSwitchingVideo) {
+          final gen = _switchGeneration;
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (mounted && _switchGeneration == gen) {
+              setState(() => _isSwitchingVideo = false);
+            }
+          });
+        }
+
         // 视频加载完成，保持隐藏模式
         // 控制条只在用户点击时才显示
         // _controlBarStateMachine.enterPassive();
@@ -374,6 +400,7 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         final errorMsg = e.toString();
         setState(() {
           _error = errorMsg;
+          _isSwitchingVideo = false; // 出错时隐藏遮罩，让用户看到错误信息
         });
         widget.onError?.call(errorMsg);
       }
@@ -691,6 +718,10 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
                   );
                 },
               ),
+
+            // 8. 视频切换遮罩
+            if (_isSwitchingVideo)
+              Positioned.fill(child: Container(color: Colors.black)),
           ],
         ),
       ),
@@ -709,7 +740,7 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         fit: StackFit.expand,
         children: [
           // 1. 视频视图
-          PolyvVideoView(keySeed: widget.videoViewKeySeed),
+          PolyvVideoView(keySeed: widget.videoViewKeySeed ?? _internalKeySeed),
 
           // 2. 手势检测层（覆盖整个区域，仅在未锁定时添加）
           if (!_isLocked && widget.enableGestures && !_isEnded)
@@ -818,6 +849,10 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
                 );
               },
             ),
+
+          // 视频切换遮罩
+          if (_isSwitchingVideo)
+            Positioned.fill(child: Container(color: Colors.black)),
         ],
       ),
     );
@@ -1140,10 +1175,10 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
             ? () => widget.onFullscreenChanged?.call(true)
             : null,
         behavior: HitTestBehavior.translucent,
-        child: PolyvVideoView(keySeed: widget.videoViewKeySeed),
+        child: PolyvVideoView(keySeed: widget.videoViewKeySeed ?? _internalKeySeed),
       );
     }
-    return PolyvVideoView(keySeed: widget.videoViewKeySeed);
+    return PolyvVideoView(keySeed: widget.videoViewKeySeed ?? _internalKeySeed);
   }
 
   Widget _buildErrorWidget() {
