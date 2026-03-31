@@ -54,6 +54,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 @property (nonatomic, assign) NSInteger currentQualityIndex; // 当前清晰度索引
 @property (nonatomic, strong) PLVVodMediaVideo *currentVideo; // 当前视频对象，用于获取清晰度信息
 @property (nonatomic, assign) BOOL isChangingQuality; // 是否正在切换清晰度
+@property (nonatomic, assign) BOOL waitingForSeekAfterQualityChange; // seek 是否完成
 @property (nonatomic, assign) BOOL wasPlayingBeforeQualityChange; // 切换前是否在播放
 @property (nonatomic, assign) CGFloat positionBeforeQualityChange; // 切换前的播放位置（秒）
 @property (nonatomic, assign) NSInteger qualitySwitchOperationId;
@@ -1095,6 +1096,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 - (void)clearPlayer {
     // 重置清晰度切换标志
     self.isChangingQuality = NO;
+    self.waitingForSeekAfterQualityChange = NO;
     self.wasPlayingBeforeQualityChange = NO;
     self.positionBeforeQualityChange = 0;
 
@@ -1185,6 +1187,20 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 - (void)PLVVodMediaPlayer:(PLVVodMediaPlayer *)vodMediaPlayer playedProgress:(CGFloat)playedProgress playedTimeString:(NSString *)playedTimeString durationTimeString:(NSString *)durationTimeString {
     [self sendProgressEvent];
 
+    // 检测清晰度切换后的 seek 是否完成
+    if (self.waitingForSeekAfterQualityChange) {
+        CGFloat currentPosition = vodMediaPlayer.currentPlaybackTime;
+        CGFloat targetPosition = self.positionBeforeQualityChange;
+        // 容差 2 秒内认为 seek 已完成
+        if (currentPosition > 0 && fabs(currentPosition - targetPosition) < 2.0) {
+            NSLog(@"[PolyvPlugin] Seek completed after quality change: position=%.2f, target=%.2f",
+                  currentPosition, targetPosition);
+            self.waitingForSeekAfterQualityChange = NO;
+            self.isChangingQuality = NO;
+            [self sendStateChangeEvent:self.wasPlayingBeforeQualityChange ? kStatePlaying : kStatePaused];
+        }
+    }
+
     static NSTimeInterval lastLogTime = 0;
     NSTimeInterval currentTime = vodMediaPlayer.currentPlaybackTime;
     if (currentTime - lastLogTime >= 1.0) {
@@ -1240,10 +1256,20 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
                     [self.player play];
                 }
 
-                self.isChangingQuality = NO;
-                [self sendStateChangeEvent:wasPlaying ? kStatePlaying : kStatePaused];
-                NSLog(@"[PolyvPlugin] Quality change completed, position: %.2f, final state: %@",
-                      savedPosition, wasPlaying ? @"playing" : @"paused");
+                // 设置等待 seek 完成标志，由 playedProgress 回调检测
+                // 当实际进度接近目标位置时，才清除 isChangingQuality
+                self.waitingForSeekAfterQualityChange = YES;
+
+                // 5 秒超时兜底：如果 seek 长时间未完成，强制释放
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
+                    dispatch_get_main_queue(), ^{
+                    if (self.waitingForSeekAfterQualityChange) {
+                        NSLog(@"[PolyvPlugin] Quality change seek timeout, forcing guard release");
+                        self.waitingForSeekAfterQualityChange = NO;
+                        self.isChangingQuality = NO;
+                        [self sendStateChangeEvent:wasPlaying ? kStatePlaying : kStatePaused];
+                    }
+                });
             });
         } else {
             NSLog(@"[PolyvPlugin] playerLoadStateDidChange: ignoring loadState=%lu during quality change",

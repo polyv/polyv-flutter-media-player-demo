@@ -8,16 +8,20 @@
 
 ### 步骤 1: 复制 polyv_media_player 目录
 
-```bash
-# 在你的项目根目录执行
-mkdir -p packages
-cp -r <开源仓库路径>/polyv_media_player packages/polyv_media_player
+将 `polyv_media_player` 目录复制到你的项目中（与你的 `lib/` 目录平级）：
+
+```
+你的项目/
+├── polyv_media_player/   ← 复制到这里
+├── lib/
+│   └── main.dart
+└── pubspec.yaml
 ```
 
 或使用 git submodule（推荐，便于获取更新）：
 
 ```bash
-git submodule add <仓库地址> packages/polyv_media_player
+git submodule add <仓库地址> polyv_media_player
 ```
 
 ### 步骤 2: 添加依赖
@@ -30,7 +34,7 @@ dependencies:
     sdk: flutter
 
   polyv_media_player:
-    path: packages/polyv_media_player
+    path: polyv_media_player
 ```
 
 然后执行：
@@ -45,14 +49,17 @@ flutter pub get
 
 ```dart
 import 'package:flutter/material.dart';
-import 'package:polyv_media_player/polyv_media_player.dart';
+import 'package:polyv_media_player/services/polyv_config_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await PolyvMediaPlayer.initialize(
+  // 初始化 Polyv SDK 账号配置
+  await PolyvConfigService().setAccountConfig(
     userId: 'your_user_id',
     secretKey: 'your_secret_key',
+    readToken: 'your_read_token',   // 可选
+    writeToken: 'your_write_token', // 可选
   );
 
   runApp(const MyApp());
@@ -106,16 +113,26 @@ class VideoPage extends StatelessWidget {
 PolyvVideoPlayer(
   vid: 'your_video_id',
   autoPlay: true,
-  showControls: true,           // 显示控制栏
-  showQualitySelector: true,    // 显示清晰度选择器
-  showSpeedSelector: true,      // 显示倍速选择器
-  aspectRatio: 16 / 9,          // 视频宽高比
-  backgroundColor: Colors.black, // 背景色
-  onLoaded: () {
-    print('视频加载完成');
-  },
+  showControls: true,              // 显示控制栏
+  enableDanmaku: true,             // 启用弹幕
+  enableGestures: true,            // 启用手势（滑动 seek）
+  enableDoubleTapFullscreen: true, // 启用双击全屏
+  isFullscreen: false,             // 是否全屏模式
+  showLockButton: false,           // 全屏时显示锁屏按钮
+  showDanmakuSend: false,          // 全屏时显示弹幕发送
+  showTopBar: false,               // 全屏时显示顶部栏
+  videoTitle: '视频标题',           // 全屏顶部栏标题
+  aspectRatio: 16 / 9,             // 视频宽高比
+  backgroundColor: Colors.black,    // 背景色
+  autoHideDuration: const Duration(seconds: 3), // 控制栏自动隐藏时长
   onPlayingChanged: (isPlaying) {
     print('播放状态: $isPlaying');
+  },
+  onFullscreenChanged: (isFullscreen) {
+    print('全屏状态: $isFullscreen');
+  },
+  onLoaded: () {
+    print('视频加载完成');
   },
   onCompleted: () {
     print('播放完成');
@@ -163,14 +180,31 @@ class _VideoPageState extends State<VideoPage> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          // 外部控制
-          _controller.isPlaying ? _controller.pause() : _controller.play();
+          _controller.effectiveIsPlaying
+              ? _controller.pause()
+              : _controller.play();
         },
-        child: Icon(_controller.isPlaying ? Icons.pause : Icons.play_arrow),
+        child: Icon(_controller.effectiveIsPlaying
+            ? Icons.pause
+            : Icons.play_arrow),
       ),
     );
   }
 }
+```
+
+### 使用弹幕
+
+```dart
+PolyvVideoPlayer(
+  vid: 'your_video_id',
+  enableDanmaku: true,
+  danmakuService: myDanmakuService,      // 弹幕数据服务
+  danmakuSendService: mySendService,     // 弹幕发送服务（可选）
+  onDanmakuSend: (text, color) async {   // 弹幕发送回调（可选）
+    // 将弹幕发送到服务器
+  },
+)
 ```
 
 ---
@@ -184,7 +218,6 @@ class _VideoPageState extends State<VideoPage> {
 ```dart
 import 'package:flutter/material.dart';
 import 'package:polyv_media_player/polyv_media_player.dart';
-import 'package:polyv_media_player/ui/control_bar.dart';
 
 class CustomVideoPage extends StatefulWidget {
   const CustomVideoPage({super.key});
@@ -239,21 +272,30 @@ class _CustomVideoPageState extends State<CustomVideoPage> {
 | `QualitySelector` | 清晰度选择器 |
 | `SpeedSelector` | 倍速选择器 |
 | `SubtitleToggle` | 字幕开关 |
+| `DanmakuToggle` | 弹幕开关 |
+| `DanmakuLayer` | 弹幕渲染层 |
+| `DanmakuInputOverlay` | 弹幕发送输入框 |
+| `DanmakuSettings` | 弹幕设置面板 |
+| `SettingsMenu` | 设置菜单（清晰度 + 倍速 + 弹幕） |
 | `PlayerColors` | 播放器颜色常量 |
 
 ### 导入 UI 组件
 
 ```dart
-// 导入所有 UI 组件
+// 导入所有（包含 PolyvVideoPlayer、PlayerController、PolyvVideoView）
 import 'package:polyv_media_player/polyv_media_player.dart';
 
-// 或单独导入
+// 或单独导入 UI 组件
 import 'package:polyv_media_player/ui/control_bar.dart';
 import 'package:polyv_media_player/ui/progress_slider/progress_slider.dart';
 import 'package:polyv_media_player/ui/quality_selector/quality_selector.dart';
 import 'package:polyv_media_player/ui/speed_selector/speed_selector.dart';
 import 'package:polyv_media_player/ui/subtitle_toggle.dart';
 import 'package:polyv_media_player/ui/player_colors.dart';
+import 'package:polyv_media_player/ui/danmaku/danmaku.dart';
+import 'package:polyv_media_player/ui/danmaku/danmaku_settings.dart';
+import 'package:polyv_media_player/ui/danmaku/danmaku_toggle.dart';
+import 'package:polyv_media_player/ui/settings_menu/settings_menu.dart';
 ```
 
 ---
@@ -262,26 +304,40 @@ import 'package:polyv_media_player/ui/player_colors.dart';
 
 ```
 你的项目/
-├── packages/
-│   └── polyv_media_player/
-│       ├── lib/
-│       │   ├── core/                    # 核心播放器
-│       │   ├── services/                # 服务层
-│       │   ├── infrastructure/          # 基础设施（弹幕、下载等）
-│       │   ├── widgets/                 # 播放器 Widget
-│       │   │   ├── polyv_video_view.dart
-│       │   │   └── polyv_video_player.dart
-│       │   ├── ui/                      # 内置 UI 组件 ✨
-│       │   │   ├── control_bar.dart
-│       │   │   ├── player_colors.dart
-│       │   │   ├── progress_slider/
-│       │   │   ├── quality_selector/
-│       │   │   ├── speed_selector/
-│       │   │   └── subtitle_toggle.dart
-│       │   └── polyv_media_player.dart
-│       ├── android/
-│       ├── ios/
-│       └── example/                     # 完整示例 App
+├── polyv_media_player/           ← 与 lib/ 平级
+│   ├── lib/
+│   │   ├── core/                    # 核心播放器
+│   │   │   ├── player_controller.dart
+│   │   │   ├── player_state.dart
+│   │   │   ├── player_config.dart
+│   │   │   └── player_events.dart
+│   │   ├── services/                # 服务层
+│   │   │   ├── polyv_config_service.dart
+│   │   │   ├── player_initializer.dart
+│   │   │   ├── video_progress_service.dart
+│   │   │   └── subtitle_preference_service.dart
+│   │   ├── infrastructure/          # 基础设施
+│   │   │   ├── danmaku/              # 弹幕系统
+│   │   │   ├── download/             # 下载管理
+│   │   │   └── video_list/           # 视频列表
+│   │   ├── widgets/                  # 播放器 Widget
+│   │   │   ├── polyv_video_player.dart  # 全功能播放器
+│   │   │   └── polyv_video_view.dart   # 原生视频视图
+│   │   ├── ui/                        # 内置 UI 组件
+│   │   │   ├── control_bar.dart
+│   │   │   ├── control_bar_state_machine.dart
+│   │   │   ├── player_colors.dart
+│   │   │   ├── gestures/              # 手势系统
+│   │   │   ├── progress_slider/
+│   │   │   ├── quality_selector/
+│   │   │   ├── speed_selector/
+│   │   │   ├── subtitle_toggle.dart
+│   │   │   ├── danmaku/               # 弹幕 UI 组件
+│   │   │   └── settings_menu/
+│   │   └── polyv_media_player.dart    # 主入口
+│   ├── android/
+│   ├── ios/
+│   └── test/
 ├── lib/
 │   └── main.dart
 └── pubspec.yaml
@@ -291,13 +347,38 @@ import 'package:polyv_media_player/ui/player_colors.dart';
 
 ## API 参考
 
-### PolyvMediaPlayer
+### SDK 初始化
 
-| 方法 | 说明 |
+```dart
+import 'package:polyv_media_player/services/polyv_config_service.dart';
+
+await PolyvConfigService().setAccountConfig(
+  userId: 'your_user_id',
+  secretKey: 'your_secret_key',
+  readToken: 'your_read_token',   // 可选
+  writeToken: 'your_write_token', // 可选
+);
+```
+
+### PlayerController
+
+| 方法 / 属性 | 说明 |
 |------|------|
-| `initialize(userId, secretKey)` | 初始化 SDK（必须在 main() 中调用） |
-| `isInitialized` | 检查 SDK 是否已初始化 |
-| `userId` | 获取当前配置的用户 ID |
+| `loadVideo(vid, {autoPlay})` | 加载视频 |
+| `play()` | 播放 |
+| `pause()` | 暂停 |
+| `stop()` | 停止 |
+| `replay()` | 重播 |
+| `seekTo(position)` | 跳转到指定位置（毫秒） |
+| `setPlaybackSpeed(speed)` | 设置倍速（0.5 - 2.0） |
+| `setQuality(index)` | 切换清晰度 |
+| `setSubtitle(index)` | 设置字幕（-1 关闭） |
+| `toggleSubtitle()` | 切换字幕开关 |
+| `dispose()` | 释放资源 |
+| `state` | 当前播放状态 |
+| `qualities` | 可用清晰度列表 |
+| `availableSubtitles` | 可用字幕列表 |
+| `effectiveIsPlaying` | 播放状态（推荐用于 UI） |
 
 ### PolyvVideoPlayer
 
@@ -306,11 +387,25 @@ import 'package:polyv_media_player/ui/player_colors.dart';
 | `vid` | `String` | 必填 | 视频 ID |
 | `autoPlay` | `bool` | `true` | 是否自动播放 |
 | `showControls` | `bool` | `true` | 是否显示控制栏 |
-| `showQualitySelector` | `bool` | `true` | 是否显示清晰度选择器 |
-| `showSpeedSelector` | `bool` | `true` | 是否显示倍速选择器 |
+| `enableDanmaku` | `bool` | `true` | 是否启用弹幕 |
+| `enableGestures` | `bool` | `true` | 是否启用手势 |
+| `enableDoubleTapFullscreen` | `bool` | `true` | 是否启用双击全屏 |
+| `isFullscreen` | `bool` | `false` | 是否全屏模式 |
+| `showLockButton` | `bool` | `false` | 全屏时显示锁屏按钮 |
+| `showDanmakuSend` | `bool` | `false` | 全屏时显示弹幕发送 |
+| `showTopBar` | `bool` | `false` | 全屏时显示顶部栏 |
+| `videoTitle` | `String?` | `null` | 全屏顶部栏标题 |
 | `aspectRatio` | `double` | `16/9` | 视频宽高比 |
 | `backgroundColor` | `Color` | `Colors.black` | 背景色 |
+| `autoHideDuration` | `Duration` | `3s` | 控制栏自动隐藏时长 |
 | `controller` | `PlayerController?` | `null` | 外部控制器 |
+| `danmakuService` | `DanmakuService?` | `null` | 弹幕数据服务 |
+| `danmakuSettings` | `DanmakuSettings?` | `null` | 弹幕设置 |
+| `danmakuSendService` | `DanmakuSendService?` | `null` | 弹幕发送服务 |
+| `onDanmakuSend` | `Function?` | `null` | 弹幕发送回调 |
+| `onFullscreenChanged` | `ValueChanged<bool>?` | `null` | 全屏切换回调 |
+| `onBack` | `VoidCallback?` | `null` | 返回按钮回调 |
+| `onMoreTap` | `VoidCallback?` | `null` | 更多按钮回调 |
 | `onLoaded` | `VoidCallback?` | `null` | 加载完成回调 |
 | `onPlayingChanged` | `ValueChanged<bool>?` | `null` | 播放状态变化回调 |
 | `onCompleted` | `VoidCallback?` | `null` | 播放完成回调 |
@@ -335,42 +430,4 @@ import 'package:polyv_media_player/ui/player_colors.dart';
 2. 确认视频 VID 有效
 3. 查看控制台日志
 
-### Q4: 如何更新到最新版本？
-
-```bash
-# 使用 git submodule 的项目
-git submodule update --remote packages/polyv_media_player
-
-# 直接复制的项目
-rm -rf packages/polyv_media_player
-cp -r <新版本路径>/polyv_media_player packages/
-```
-
 ---
-
-## 从旧版本迁移
-
-如果你的项目使用旧的集成方式（需要手动复制 UI 代码），现在可以简化：
-
-### 迁移步骤
-
-1. 更新 `polyv_media_player` 到最新版本
-2. 删除项目中手动复制的 `player_skin/` 目录
-3. 将导入路径从本地改为 package 内置：
-
-```dart
-// 旧代码
-import 'player_skin/control_bar.dart';
-
-// 新代码
-import 'package:polyv_media_player/ui/control_bar.dart';
-```
-
-4. 或直接使用 `PolyvVideoPlayer` 组件替代手动组装
-
----
-
-## 获取帮助
-
-- GitHub Issues: https://github.com/polyv/polyv-flutter-media-player/issues
-- 文档: https://polyv.github.io/polyv-flutter-media-player

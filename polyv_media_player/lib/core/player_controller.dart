@@ -249,6 +249,17 @@ class PlayerController extends ChangeNotifier {
     // 这样做可以确保切换清晰度期间 SDK 发送的中间状态
     // （buffering→paused→playing 等）不会影响图标。
 
+    // 清晰度切换完成后，原生层会发送 playing/paused 状态
+    // 此时 seek 已完成，可以解除进度冻结
+    if (_isSwitchingQuality &&
+        (newState == PlayerLoadingState.playing ||
+            newState == PlayerLoadingState.paused)) {
+      PlvLogger.d('[PlayerController] Quality switch completed, unfreezing progress at state: $newState');
+      _isSwitchingQuality = false;
+      _frozenPosition = null;
+      _qualityFreezeTimer?.cancel();
+    }
+
     // 终端事件（completed/error）需要重置意图和切换标志
     if (newState == PlayerLoadingState.completed ||
         newState == PlayerLoadingState.error) {
@@ -308,23 +319,12 @@ class PlayerController extends ChangeNotifier {
     final duration = data['duration'] as int? ?? _state.duration;
     final buffered = data['bufferedPosition'] as int? ?? 0;
 
-    // 第一层：切换清晰度前 3 秒内，无条件冻结进度
+    // 第一层：切换清晰度期间，冻结进度更新
+    // 原生层在 seek 完成后才发送 playing/paused 状态，
+    // _handleStateChanged 收到后会清除 _isSwitchingQuality
     if (_isSwitchingQuality) {
-      print('[PlayerController] ⚠️ PROGRESS FROZEN (timer): pos=$position, dur=$duration');
+      PlvLogger.d('[PlayerController] PROGRESS FROZEN during quality switch: pos=$position, dur=$duration');
       return;
-    }
-
-    // 第二层：定时器到期后，仍然拒绝大幅向后跳动的位置
-    // 比如 HD→流畅切换需要 >3秒，定时器已过期但新流还在从头播放
-    final frozen = _frozenPosition;
-    if (frozen != null && frozen > 5000 && position < frozen - 5000) {
-      print('[PlayerController] ⚠️ PROGRESS FROZEN (position safety): pos=$position, frozen=$frozen');
-      return;
-    }
-    // 位置已恢复正常，清除安全网
-    if (_frozenPosition != null) {
-      print('[PlayerController] ✅ PROGRESS UNFROZEN: pos=$position, was frozen at $frozen');
-      _frozenPosition = null;
     }
 
     _updateState(
@@ -932,8 +932,14 @@ class PlayerController extends ChangeNotifier {
     _isSwitchingQuality = true;
     _frozenPosition = currentPosition;
     _qualityFreezeTimer?.cancel();
-    _qualityFreezeTimer = Timer(const Duration(seconds: 3), () {
-      _isSwitchingQuality = false;
+    // 安全超时：8 秒兜底，防止原生层异常导致进度永远冻结
+    // 正常情况下，_handleStateChanged 收到 playing/paused 时会提前清除
+    _qualityFreezeTimer = Timer(const Duration(seconds: 8), () {
+      if (_isSwitchingQuality) {
+        PlvLogger.w('[PlayerController] Quality switch freeze timeout, forcing unfreeze');
+        _isSwitchingQuality = false;
+        _frozenPosition = null;
+      }
     });
 
     try {

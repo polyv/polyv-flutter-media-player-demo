@@ -148,6 +148,11 @@ class PolyvVideoPlayer extends StatefulWidget {
   /// 当这个值改变时，视频视图会被完全重建，清除旧画面
   final Object? videoViewKeySeed;
 
+  /// 弹幕显示区域高度因子（0.0 - 1.0，默认 0.6）
+  ///
+  /// 仅使用上层区域显示弹幕，避免与底部控制栏重叠
+  final double danmakuHeightFactor;
+
   const PolyvVideoPlayer({
     super.key,
     required this.vid,
@@ -177,6 +182,7 @@ class PolyvVideoPlayer extends StatefulWidget {
     this.onCompleted,
     this.onError,
     this.videoViewKeySeed,
+    this.danmakuHeightFactor = 0.6,
   });
 
   @override
@@ -318,6 +324,20 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
       return;
     }
 
+    // 如果控制器已经加载了相同的视频，跳过重新加载（例如全屏切换时）
+    // 这样可以避免视频重新加载导致的卡顿
+    if (_controller.state.vid == widget.vid && _controller.state.isPrepared) {
+      // 从控制器同步当前状态
+      final isCompleted = _controller.state.loadingState == PlayerLoadingState.completed;
+      setState(() {
+        _isLoaded = true;
+        _error = null;
+        _isEnded = isCompleted;
+        _isPlaying = _controller.effectiveIsPlaying;
+      });
+      return;
+    }
+
     // 进入隐藏模式
     _controlBarStateMachine.enterHidden();
 
@@ -437,12 +457,26 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
   void _lockScreen() {
     _controlBarStateMachine.enterHidden();
     setState(() => _isLocked = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: const Text('屏幕已锁定'),
+        duration: const Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   /// 解锁屏幕
   void _unlockScreen() {
     setState(() => _isLocked = false);
     _controlBarStateMachine.enterPassive();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: const Text('屏幕已解锁'),
+        duration: const Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   /// 显示弹幕发送覆盖层
@@ -580,6 +614,7 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
                     fontSize: _danmakuSettings.fontSize,
                     currentTime: _controller.state.position,
                     danmakus: _danmakus,
+                    heightFactor: widget.danmakuHeightFactor,
                   );
                 },
               ),
@@ -705,6 +740,7 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
                   fontSize: _danmakuSettings.fontSize,
                   currentTime: _controller.state.position,
                   danmakus: _danmakus,
+                  heightFactor: widget.danmakuHeightFactor,
                 );
               },
             ),

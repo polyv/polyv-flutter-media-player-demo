@@ -443,15 +443,29 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            _currentVideo?.duration != null
-                ? '时长: ${Duration(milliseconds: _currentVideo!.duration).inMinutes} 分钟'
-                : '',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.6),
+          if (_currentVideo != null)
+            Row(
+              children: [
+                if (_currentVideo!.views != null) ...[
+                  Text(
+                    '${_currentVideo!.views}次播放',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.6),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                ],
+                if (_currentVideo!.duration > 0)
+                  Text(
+                    '时长: ${_currentVideo!.durationFormatted}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.6),
+                    ),
+                  ),
+              ],
             ),
-          ),
         ],
       ),
     ),
