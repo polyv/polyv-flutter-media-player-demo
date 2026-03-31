@@ -254,6 +254,14 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
         _controller.loadVideo(previousVideo.vid).catchError((error) {
           PlvLogger.w('恢复原视频失败: $error');
         });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('视频切换失败，请重试'),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     }
   }
@@ -426,49 +434,59 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
   }
 
   Widget _buildVideoInfo() {
-    return SizedBox(
-      width: double.infinity,
-      child: Container(
-        color: const Color(0xFF0F172A),
-        padding: const EdgeInsets.all(16),
+    if (_currentVideo == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A).withValues(alpha: 0.5),
+        border: Border(
+          bottom: BorderSide(
+            color: const Color(0x4D2D3548),
+            width: 1,
+          ),
+        ),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            _currentVideo?.title ?? '选择一个视频',
+            _currentVideo!.title,
             style: const TextStyle(
-              fontSize: 16,
+              fontSize: 18,
               fontWeight: FontWeight.w600,
               color: Colors.white,
+              height: 1.3,
             ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 4),
-          if (_currentVideo != null)
-            Row(
-              children: [
-                if (_currentVideo!.views != null) ...[
-                  Text(
-                    '${_currentVideo!.views}次播放',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.6),
-                    ),
+          Row(
+            children: [
+              if (_currentVideo!.views != null) ...[
+                Text(
+                  '${_currentVideo!.views}次播放',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF94A3B8),
                   ),
-                  const SizedBox(width: 16),
-                ],
-                if (_currentVideo!.duration > 0)
-                  Text(
-                    '时长: ${_currentVideo!.durationFormatted}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.6),
-                    ),
-                  ),
+                ),
+                const SizedBox(width: 16),
               ],
-            ),
+              Text(
+                _currentVideo!.durationFormatted,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: Color(0xFF94A3B8),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
-    ),
     );
   }
 

@@ -536,11 +536,26 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         setState(() {
           _danmakus = [..._danmakus, newDanmaku];
         });
-        // 注意：不在这里关闭弹幕输入覆盖层
-        // DanmakuInputOverlay._handleSend() 已经会调用 onClose 回调来关闭
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('弹幕发送成功'),
+            duration: Duration(seconds: 1),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     } catch (e) {
       debugPrint('Failed to send danmaku: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e is DanmakuSendException ? e.message : '发送失败，请重试'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isSendingDanmaku = false);
     }
