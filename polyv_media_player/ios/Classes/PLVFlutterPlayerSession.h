@@ -41,6 +41,9 @@
               errorCode:(NSString * _Nullable * _Nullable)errorCode
           errorMessage:(NSString * _Nullable * _Nullable)errorMessage;
 
+/// 使用 fallbackDuration 发送进度事件（离线播放时 player.duration 可能为 0）
+- (BOOL)sendProgressEventWithFallbackDuration:(NSTimeInterval)fallbackDuration;
+
 - (BOOL)sendProgressEvent;
 - (BOOL)sendStateChangeEvent:(NSString *)state;
 - (BOOL)sendErrorEventWithCode:(NSString *)code message:(NSString *)message;

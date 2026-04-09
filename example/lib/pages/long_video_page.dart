@@ -78,7 +78,29 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
   void initState() {
     super.initState();
     _controller = PlayerController();
+    _controller.addListener(_onControllerStateChanged);
     _initializeServices();
+  }
+
+  /// 监听 controller 状态变化，更新离线视频的 duration
+  void _onControllerStateChanged() {
+    if (!widget.isOfflineMode) return;
+    if (_currentVideo == null || _currentVideo!.duration > 0) return;
+    final durationMs = _controller.state.duration;
+    if (durationMs <= 0) return;
+
+    final updatedVideo = _currentVideo!.copyWith(
+      duration: durationMs ~/ 1000,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _currentVideo = updatedVideo;
+      final index = _videos.indexWhere((v) => v.vid == updatedVideo.vid);
+      if (index >= 0) {
+        _videos[index] = updatedVideo;
+      }
+    });
   }
 
   Future<void> _initializeServices() async {
@@ -98,6 +120,12 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
       }
     } catch (e) {
       PlvLogger.w('LongVideoPage: Failed to load config: $e');
+
+      // 离线模式不依赖 config，仍然可以播放已下载的视频
+      if (widget.isOfflineMode && widget.initialVid != null) {
+        _loadOfflineVideo(widget.initialVid!);
+        return;
+      }
 
       if (mounted) {
         setState(() {
@@ -252,6 +280,7 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
   void dispose() {
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    _controller.removeListener(_onControllerStateChanged);
     _controller.dispose();
     super.dispose();
   }
@@ -287,6 +316,7 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
             vid: _currentVideo?.vid ?? '',
             controller: _controller,
             isFullscreen: true,
+            enableDanmaku: true,
             showLockButton: true,
             showDanmakuSend: true,
             showTopBar: true,
@@ -333,7 +363,10 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
               ),
             ),
           ),
-          _buildVideoInfo(),
+          ListenableBuilder(
+            listenable: _controller,
+            builder: (_, __) => _buildVideoInfo(),
+          ),
           Expanded(child: _buildVideoList()),
         ],
       ),
@@ -387,6 +420,11 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
       return const SizedBox.shrink();
     }
 
+    // 离线播放时 VideoItem 的 duration 可能为 0，使用 controller 的实际 duration
+    final displayDuration = _currentVideo!.duration > 0
+        ? _currentVideo!.duration
+        : (_controller.state.duration > 0 ? _controller.state.duration ~/ 1000 : 0);
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       decoration: BoxDecoration(
@@ -426,7 +464,7 @@ class _LongVideoPageState extends State<LongVideoPage> implements DownloadCallba
                 const SizedBox(width: 16),
               ],
               Text(
-                _currentVideo!.durationFormatted,
+                VideoItem.formatDuration(displayDuration),
                 style: const TextStyle(
                   fontSize: 14,
                   color: Color(0xFF94A3B8),

@@ -377,6 +377,9 @@ internal class PlayerCoordinator(
                 lastKnownDurationMs = rawDuration
             }
 
+            // Fallback: 当 durationState 为 0（离线播放常见）时使用上次已知的 duration
+            val effectiveDuration = if (rawDuration > 0L) rawDuration else lastKnownDurationMs
+
             // 检测 seek 是否完成：实际进度接近目标位置（容差 2000ms）
             if (waitingForSeekCompletion && pendingSeekPositionAfterQualityChange != null) {
                 val target = pendingSeekPositionAfterQualityChange!!
@@ -410,10 +413,20 @@ internal class PlayerCoordinator(
             val durationToReport = if (isChangingBitRate && lastKnownDurationMs > 0L) {
                 lastKnownDurationMs
             } else {
-                rawDuration
+                effectiveDuration
             }
 
             playbackEventEmitter.sendProgress(positionToReport, durationToReport, 0L)
+        }.addTo(observers)
+
+        // 监听 durationState 变化：当 duration 从 0 变为有效值时，立即发送进度更新
+        // 这解决离线播放时 duration 延迟更新的问题
+        plvPlayer.getStateListenerRegistry().durationState.observe { durationMs ->
+            if (durationMs != null && durationMs > 0L && !isChangingBitRate) {
+                lastKnownDurationMs = durationMs
+                val currentPosition = plvPlayer.getStateListenerRegistry().progressState.value ?: 0L
+                playbackEventEmitter.sendProgress(currentPosition, durationMs, 0L)
+            }
         }.addTo(observers)
 
         plvPlayer.getBusinessListenerRegistry().businessErrorState.observe { errorState ->

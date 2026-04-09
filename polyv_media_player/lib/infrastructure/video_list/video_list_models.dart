@@ -18,7 +18,7 @@ class VideoItem {
   final int duration;
 
   /// 视频时长格式化字符串（MM:SS 或 HH:MM:SS）
-  String get durationFormatted => _formatDuration(duration);
+  String get durationFormatted => formatDuration(duration);
 
   /// 缩略图 URL（第一帧截图）
   final String thumbnail;
@@ -142,7 +142,7 @@ class VideoItem {
   }
 
   /// 格式化时长为 MM:SS 或 HH:MM:SS
-  static String _formatDuration(int seconds) {
+  static String formatDuration(int seconds) {
     final h = seconds ~/ 3600;
     final m = (seconds % 3600) ~/ 60;
     final s = seconds % 60;

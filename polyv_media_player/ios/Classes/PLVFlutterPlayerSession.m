@@ -139,6 +139,31 @@
     return [[NSUserDefaults standardUserDefaults] integerForKey:@"PLVLastSelectedQuality"];
 }
 
+- (BOOL)sendProgressEventWithFallbackDuration:(NSTimeInterval)fallbackDuration {
+    if (!self.player || !self.eventEmitter) {
+        return NO;
+    }
+
+    NSInteger position = (NSInteger)(self.player.currentPlaybackTime * 1000);
+    NSInteger duration = (NSInteger)(self.player.duration * 1000);
+    NSInteger buffered = (NSInteger)(self.player.playableDuration * 1000);
+
+    // Fallback: player.duration 为 0 时（离线播放常见），使用 video metadata 的时长
+    if (duration <= 0 && fallbackDuration > 0) {
+        duration = (NSInteger)(fallbackDuration * 1000);
+    }
+
+    [self.eventEmitter sendPlayerEvent:@{
+        @"type": @"progress",
+        @"data": @{
+            @"position": @(position),
+            @"duration": @(duration),
+            @"bufferedPosition": @(buffered)
+        }
+    }];
+    return YES;
+}
+
 - (BOOL)sendProgressEvent {
     if (!self.player || !self.eventEmitter) {
         return NO;

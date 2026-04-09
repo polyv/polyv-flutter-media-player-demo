@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/player_controller.dart';
@@ -82,6 +84,25 @@ class SettingsMenu extends StatefulWidget {
 }
 
 class _SettingsMenuState extends State<SettingsMenu> {
+  /// BottomSheet 内部 Toast 提示
+  String? _toastMessage;
+  Timer? _toastTimer;
+
+  @override
+  void dispose() {
+    _toastTimer?.cancel();
+    super.dispose();
+  }
+
+  /// 显示内部 Toast 提示（在 BottomSheet 内部渲染，不受遮罩层影响）
+  void _showToast(String message) {
+    _toastTimer?.cancel();
+    setState(() => _toastMessage = message);
+    _toastTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _toastMessage = null);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -140,6 +161,31 @@ class _SettingsMenuState extends State<SettingsMenu> {
                     ],
                   ),
                 ),
+
+                // 内部 Toast 提示
+                if (_toastMessage != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        _toastMessage!,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: PlayerColors.textMuted,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
 
                 // Content
                 Padding(
@@ -446,10 +492,7 @@ class _SettingsMenuState extends State<SettingsMenu> {
 
   /// 处理音频模式按钮点击
   void _handleAudioMode() {
-    // 暂不支持，显示提示
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('音频模式功能暂未开放')));
+    _showToast('音频模式功能暂未开放');
   }
 
   /// 处理下载按钮点击
@@ -457,9 +500,7 @@ class _SettingsMenuState extends State<SettingsMenu> {
     final vid = widget.controller.state.vid;
     if (vid == null || vid.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('无法获取视频信息')));
+        _showToast('无法获取视频信息');
       }
       return;
     }
@@ -489,12 +530,7 @@ class _SettingsMenuState extends State<SettingsMenu> {
     DownloadStateManager stateManager,
   ) async {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('正在创建下载任务...'),
-          duration: Duration(seconds: 1),
-        ),
-      );
+      _showToast('正在创建下载任务...');
     }
 
     try {
@@ -526,9 +562,7 @@ class _SettingsMenuState extends State<SettingsMenu> {
 
       if (error != null && mounted) {
         PlvLogger.w('[SettingsMenu] Sync failed: $error');
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('下载创建成功，但同步失败: $error')));
+        _showToast('下载创建成功，但同步失败: $error');
         return;
       }
 
@@ -547,9 +581,7 @@ class _SettingsMenuState extends State<SettingsMenu> {
 
       // 显示成功提示
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('已添加到下载队列')));
+        _showToast('已添加到下载队列');
       }
 
       // 关闭弹窗
@@ -570,19 +602,7 @@ class _SettingsMenuState extends State<SettingsMenu> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMessage),
-            duration: const Duration(seconds: 3),
-            action: e is PlatformException && e.code == 'NOT_IMPLEMENTED'
-                ? SnackBarAction(
-                    label: '知道了',
-                    textColor: const Color(0xFFE8704D),
-                    onPressed: () {},
-                  )
-                : null,
-          ),
-        );
+        _showToast(errorMessage);
       }
     }
   }

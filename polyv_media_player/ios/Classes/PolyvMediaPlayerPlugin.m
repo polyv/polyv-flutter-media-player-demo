@@ -288,6 +288,10 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 
     NSLog(@"[PolyvPlugin] SDK account settings updated successfully");
 
+    // 设置下载管理器的 accountID，确保重启后能正确读取已下载的任务列表
+    [[PLVDownloadMediaManager sharedManager] setAccountID:userId];
+    NSLog(@"[PolyvPlugin] Download manager accountID set to: %@", userId);
+
     result(nil);
 }
 
@@ -1151,7 +1155,9 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 }
 
 - (void)sendProgressEvent {
-    [self.playerSession sendProgressEvent];
+    // 使用 currentVideo.duration 作为 fallback，解决离线播放时 player.duration 为 0 的问题
+    NSTimeInterval fallback = self.currentVideo.duration;
+    [self.playerSession sendProgressEventWithFallbackDuration:fallback];
 }
 
 - (void)sendErrorEventWithCode:(NSString *)code message:(NSString *)message {
@@ -1221,6 +1227,9 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 - (void)plvMediaPlayerCore:(PLVMediaPlayerCore *)player playerIsPreparedToPlay:(BOOL)prepared {
     if (prepared && !self.isChangingQuality) {
         [self sendStateChangeEvent:kStatePrepared];
+
+        // 发送初始进度事件，确保 Flutter 层立即获得 duration（尤其离线播放场景）
+        [self sendProgressEvent];
 
         // 发送字幕列表事件（与 Android 保持一致，在 onPrepared 时发送）
         // 默认开启字幕，让 Flutter 层根据默认算法选择字幕

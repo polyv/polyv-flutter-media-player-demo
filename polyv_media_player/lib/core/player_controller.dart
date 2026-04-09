@@ -784,15 +784,17 @@ class PlayerController extends ChangeNotifier {
       // 加载新视频时清除清晰度切换的位置冻结
       _frozenPosition = null;
 
-      // 重置播放状态，包括倍速（新视频应以正常速度开始）
-      // 稍后会尝试恢复保存的播放进度
+      // 记住当前倍速，切换视频后恢复
+      final previousSpeed = _state.playbackSpeed;
+
+      // 重置播放状态（保留倍速），稍后会尝试恢复保存的播放进度
       _updateState(_state.copyWith(
         loadingState: PlayerLoadingState.loading,
         vid: vid,
         position: 0,
         duration: 0,
         bufferedPosition: 0,
-        playbackSpeed: 1.0, // 重置倍速，保持 UI 与实际播放速度同步
+        // 不重置倍速，切换视频时保留用户设置的播放速度
       ));
       PlvLogger.d(
         '[PlayerController] State updated to loading, vid: ${_state.vid}, speed: ${_state.playbackSpeed}',
@@ -812,8 +814,13 @@ class PlayerController extends ChangeNotifier {
       );
       PlvLogger.d('[PlayerController] Platform channel call completed');
 
-      // 同步重置原生层的播放速度为 1.0，确保 UI 与实际播放速度一致
-      await MethodChannelHandler.setPlaybackSpeed(_methodChannel, 1.0);
+      // 恢复之前的播放速度（原生层加载新视频后会重置为 1.0）
+      if (previousSpeed != 1.0) {
+        await MethodChannelHandler.setPlaybackSpeed(
+          _methodChannel,
+          previousSpeed,
+        );
+      }
 
       // 加载完成后，清除切换标志（prepared 状态会自动清除）
     } on PlatformException catch (e) {

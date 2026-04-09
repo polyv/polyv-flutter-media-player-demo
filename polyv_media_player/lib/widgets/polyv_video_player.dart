@@ -506,6 +506,12 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
     );
   }
 
+  /// 是否有可用的弹幕发送服务
+  bool _hasDanmakuSendService() {
+    return widget.danmakuSendService != null ||
+        _ownedDanmakuSendService != null;
+  }
+
   /// 显示弹幕发送覆盖层
   void _showDanmakuInputOverlay() {
     if (!_controller.state.isPrepared) return;
@@ -839,9 +845,14 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
                         // 锁屏按钮
                         if (widget.showLockButton) _buildLockButton(),
 
-                        // 弹幕发送按钮
+                        // 弹幕开关（全屏右侧，无发送服务时单独显示）
+                        if (widget.enableDanmaku &&
+                            !_hasDanmakuSendService())
+                          _buildDanmakuToggleButton(),
+
+                        // 弹幕发送按钮（含弹幕开关）
                         if (widget.showDanmakuSend &&
-                            widget.danmakuSendService != null)
+                            _hasDanmakuSendService())
                           _buildDanmakuSendButton(),
                       ],
                     ),
@@ -955,6 +966,8 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
           const SizedBox(width: 16),
           SubtitleToggle(controller: _controller),
           const SizedBox(width: 8),
+          DanmakuToggle(settings: _danmakuSettings),
+          const SizedBox(width: 8),
           _buildExitFullscreenButton(),
         ],
       ),
@@ -1047,6 +1060,34 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
           child: IconButton(
             icon: const Icon(Icons.lock_open_rounded, color: Colors.white70),
             onPressed: _lockScreen,
+          ),
+        ),
+      ),
+    );
+  }
+  /// 弹幕开关按钮（全屏右侧浮动，不含发弹幕）
+  Widget _buildDanmakuToggleButton() {
+    return Positioned(
+      right: 16,
+      top: 0,
+      bottom: 0,
+      child: Center(
+        child: Container(
+          decoration: BoxDecoration(
+            color: _danmakuSettings.enabled
+                ? const Color(0xFF6366F1).withValues(alpha: 0.8)
+                : Colors.black.withValues(alpha: 0.4),
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            icon: Icon(
+              Icons.subtitles_outlined,
+              color:
+                  _danmakuSettings.enabled ? Colors.white : Colors.white70,
+            ),
+            onPressed: () {
+              setState(() => _danmakuSettings.toggle());
+            },
           ),
         ),
       ),
