@@ -351,6 +351,15 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         _isEnded = isCompleted;
         _isPlaying = _controller.effectiveIsPlaying;
       });
+
+      // 全屏切换时新 PolyvVideoPlayer 实例的 _danmakus 为空，需补充加载
+      if (widget.enableDanmaku && _danmakus.isEmpty) {
+        final service = widget.danmakuService ?? _ownedDanmakuService;
+        if (service != null) {
+          _loadDanmakus(service);
+        }
+      }
+
       return;
     }
 
