@@ -976,34 +976,7 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
 
   /// 全屏进度条
   Widget _buildFullscreenProgressBar() {
-    return ListenableBuilder(
-      listenable: _controller,
-      builder: (context, _) {
-        final state = _controller.state;
-        return SliderTheme(
-          data: SliderThemeData(
-            activeTrackColor: const Color(0xFFE8704D),
-            inactiveTrackColor: const Color(0xFF2D3548),
-            secondaryActiveTrackColor: const Color(0xFF3D4560),
-            thumbColor: const Color(0xFFE8704D),
-            overlayColor: const Color(0x33E8704D),
-            trackHeight: 2,
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-            trackShape: const RectangularSliderTrackShape(),
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
-          ),
-          child: Slider(
-            value: state.progress.clamp(0.0, 1.0),
-            secondaryTrackValue: state.bufferProgress.clamp(0.0, 1.0),
-            max: 1.0,
-            onChanged: (value) {
-              final position = (value * state.duration).toInt();
-              _controller.seekTo(position);
-            },
-          ),
-        );
-      },
-    );
+    return _SmoothProgressBar(controller: _controller);
   }
 
   /// 退出全屏按钮
@@ -1312,46 +1285,7 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
 
   /// 构建进度条（与原版 long_video_page 样式一致）
   Widget _buildProgressBar() {
-    return ListenableBuilder(
-      listenable: _controller,
-      builder: (context, _) {
-        final progress = _controller.state.progress;
-        final bufferProgress = _controller.state.bufferProgress;
-        final clampedProgress = progress.clamp(0.0, 1.0);
-
-        return SliderTheme(
-          data: SliderThemeData(
-            // 已播放进度颜色
-            activeTrackColor: const Color(0xFFE8704D),
-            // 未播放进度颜色（背景）
-            inactiveTrackColor: const Color(0xFF2D3548),
-            // 缓冲进度颜色
-            secondaryActiveTrackColor: const Color(0xFF3D4560),
-            // 拖动手柄颜色
-            thumbColor: const Color(0xFFE8704D),
-            // 按下时的阴影
-            overlayColor: const Color(0x33E8704D),
-            // 轨道高度
-            trackHeight: 2,
-            // 手柄形状和大小
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-            // 轨道形状
-            trackShape: const RectangularSliderTrackShape(),
-            // 不显示数值指示器
-            showValueIndicator: ShowValueIndicator.never,
-          ),
-          child: Slider(
-            value: clampedProgress,
-            secondaryTrackValue: bufferProgress.clamp(0.0, 1.0),
-            max: 1.0,
-            onChanged: (value) {
-              final position = (value * _controller.state.duration).toInt();
-              _controller.seekTo(position);
-            },
-          ),
-        );
-      },
-    );
+    return _SmoothProgressBar(controller: _controller);
   }
 
   /// 构建全屏按钮
@@ -1416,5 +1350,225 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         );
       },
     );
+  }
+}
+
+/// 流畅的进度条组件
+///
+/// 使用 GestureDetector + CustomPaint 替代 Flutter Slider，
+/// 与手势 seek 一样通过 setState 驱动连续更新，确保拖动流畅。
+class _SmoothProgressBar extends StatefulWidget {
+  final PlayerController controller;
+
+  const _SmoothProgressBar({required this.controller});
+
+  @override
+  State<_SmoothProgressBar> createState() => _SmoothProgressBarState();
+}
+
+class _SmoothProgressBarState extends State<_SmoothProgressBar> {
+  bool _isDragging = false;
+  double _dragProgress = 0.0;
+
+  void _seekToProgress(double progress) {
+    final state = widget.controller.state;
+    final position = (progress * state.duration).toInt();
+    widget.controller.seekTo(position);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final height = constraints.maxHeight;
+
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              // 点击 seek
+              onTapUp: (details) {
+                final progress =
+                    (details.localPosition.dx / width).clamp(0.0, 1.0);
+                setState(() => _dragProgress = progress);
+                _seekToProgress(progress);
+              },
+              // 拖动 seek
+              onHorizontalDragStart: (details) {
+                setState(() {
+                  _isDragging = true;
+                  _dragProgress =
+                      (details.localPosition.dx / width).clamp(0.0, 1.0);
+                });
+              },
+              onHorizontalDragUpdate: (details) {
+                final box = context.findRenderObject() as RenderBox;
+                final localX = box.globalToLocal(details.globalPosition).dx;
+                setState(() {
+                  _dragProgress = (localX / width).clamp(0.0, 1.0);
+                });
+              },
+              onHorizontalDragEnd: (_) {
+                _seekToProgress(_dragProgress);
+                setState(() => _isDragging = false);
+              },
+              onHorizontalDragCancel: () {
+                setState(() => _isDragging = false);
+              },
+              child: ListenableBuilder(
+                listenable: widget.controller,
+                builder: (context, _) {
+                  final state = widget.controller.state;
+                  final progress = _isDragging
+                      ? _dragProgress
+                      : state.progress.clamp(0.0, 1.0);
+
+                  return CustomPaint(
+                    painter: _ProgressBarPainter(
+                      progress: progress,
+                      bufferProgress: state.bufferProgress.clamp(0.0, 1.0),
+                    ),
+                    size: Size(width, height),
+                  );
+                },
+              ),
+            ),
+
+            // 拖动时在滑块上方显示时间预览
+            if (_isDragging)
+              ListenableBuilder(
+                listenable: widget.controller,
+                builder: (context, _) {
+                  final state = widget.controller.state;
+                  final thumbX = _dragProgress.clamp(0.0, 1.0) * width;
+                  final positionMs =
+                      (_dragProgress.clamp(0.0, 1.0) * state.duration)
+                          .toInt();
+
+                  return Positioned(
+                    left: thumbX.clamp(25.0, width - 25.0),
+                    bottom: height / 2 + 10,
+                    child: FractionalTranslation(
+                      translation: const Offset(-0.5, 0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xDD000000),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          _formatDragTime(positionMs),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _formatDragTime(int ms) {
+    if (ms <= 0) return '00:00';
+
+    final seconds = ms ~/ 1000;
+    final mins = seconds ~/ 60;
+    final secs = seconds % 60;
+
+    if (mins >= 60) {
+      final hours = mins ~/ 60;
+      final remainingMins = mins % 60;
+      return '$hours:${remainingMins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+    }
+    return '${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+  }
+}
+
+/// 进度条自定义绘制器
+class _ProgressBarPainter extends CustomPainter {
+  final double progress;
+  final double bufferProgress;
+
+  static const _activeColor = Color(0xFFE8704D);
+  static const _inactiveColor = Color(0xFF2D3548);
+  static const _bufferColor = Color(0xFF3D4560);
+  static const _trackHeight = 2.0;
+  static const _thumbRadius = 6.0;
+
+  _ProgressBarPainter({
+    required this.progress,
+    required this.bufferProgress,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final centerY = size.height / 2;
+    final trackRect = Rect.fromLTWH(
+      0,
+      centerY - _trackHeight / 2,
+      size.width,
+      _trackHeight,
+    );
+    final trackRRect = RRect.fromRectAndRadius(
+      trackRect,
+      const Radius.circular(1),
+    );
+
+    // 背景轨道
+    canvas.drawRRect(trackRRect, Paint()..color = _inactiveColor);
+
+    // 缓冲进度
+    if (bufferProgress > 0) {
+      final bufferRect = Rect.fromLTWH(
+        0,
+        centerY - _trackHeight / 2,
+        bufferProgress * size.width,
+        _trackHeight,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(bufferRect, const Radius.circular(1)),
+        Paint()..color = _bufferColor,
+      );
+    }
+
+    // 播放进度
+    if (progress > 0) {
+      final activeRect = Rect.fromLTWH(
+        0,
+        centerY - _trackHeight / 2,
+        progress * size.width,
+        _trackHeight,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(activeRect, const Radius.circular(1)),
+        Paint()..color = _activeColor,
+      );
+    }
+
+    // 拖动手柄
+    final thumbX = progress * size.width;
+    canvas.drawCircle(
+      Offset(thumbX, centerY),
+      _thumbRadius,
+      Paint()..color = _activeColor,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_ProgressBarPainter old) {
+    return old.progress != progress || old.bufferProgress != bufferProgress;
   }
 }

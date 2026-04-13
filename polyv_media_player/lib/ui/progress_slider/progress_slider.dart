@@ -37,24 +37,52 @@ class ProgressSlider extends StatefulWidget {
   State<ProgressSlider> createState() => _ProgressSliderState();
 }
 
-class _ProgressSliderState extends State<ProgressSlider> {
+class _ProgressSliderState extends State<ProgressSlider>
+    with SingleTickerProviderStateMixin {
   late double _sliderValue;
   bool _isDragging = false;
-  int _dragEndFrame = 0; // 拖动结束时的帧计数，用于冷却期
+
+  // 动画控制器：用于非拖动时的平滑过渡
+  late final AnimationController _animController;
+  late Animation<double> _animation;
+  double _animFrom = 0.0;
+  double _animTo = 0.0;
 
   // 播放器专用颜色常量
-  static const Color _background = Color(0xFF2D3548); // PlayerColors.controls
-  static const Color _progress = Color(0xFFE8704D); // PlayerColors.progress
-  static const Color _buffer = Color(0xFF3D4560); // PlayerColors.progressBuffer
+  static const Color _background = Color(0xFF2D3548);
+  static const Color _progress = Color(0xFFE8704D);
+  static const Color _buffer = Color(0xFF3D4560);
+
+  // const SliderThemeData 避免每次 build 重新创建
+  static const SliderThemeData _sliderTheme = SliderThemeData(
+    activeTrackColor: _progress,
+    inactiveTrackColor: _background,
+    secondaryActiveTrackColor: _buffer,
+    thumbColor: _progress,
+    overlayColor: Color(0x33E8704D),
+    trackHeight: 4,
+    thumbShape: RoundSliderThumbShape(enabledThumbRadius: 6),
+    trackShape: RoundedRectSliderTrackShape(),
+    showValueIndicator: ShowValueIndicator.never,
+    overlappingShapeStrokeColor: Colors.transparent,
+  );
 
   @override
   void initState() {
     super.initState();
     _sliderValue = widget.value;
+
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+
+    _animation = const AlwaysStoppedAnimation(0.0);
   }
 
   @override
   void dispose() {
+    _animController.dispose();
     super.dispose();
   }
 
@@ -62,16 +90,33 @@ class _ProgressSliderState extends State<ProgressSlider> {
   void didUpdateWidget(ProgressSlider oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // 拖动期间或冷却期内（拖动结束后2帧内），不更新滑块值
-    if (_isDragging || _dragEndFrame > 0) {
-      if (_dragEndFrame > 0) {
-        _dragEndFrame--;
-      }
+    // 拖动期间不更新，完全由用户手势控制
+    if (_isDragging) return;
+
+    // 进度值变化时，用动画平滑过渡
+    if (oldWidget.value != widget.value) {
+      _animateTo(widget.value);
+    }
+  }
+
+  void _animateTo(double target) {
+    final currentDisplay = _animController.isCompleted ? _animTo : _sliderValue;
+
+    _animFrom = currentDisplay;
+    _animTo = target.clamp(0.0, 1.0);
+
+    // 如果差值极小（< 0.001），直接赋值跳过动画
+    if ((_animTo - _animFrom).abs() < 0.001) {
+      _animController.value = 1.0;
+      _sliderValue = _animTo;
       return;
     }
 
-    // 正常更新
-    _sliderValue = widget.value;
+    _animation = Tween<double>(begin: _animFrom, end: _animTo).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.easeOut),
+    );
+
+    _animController.forward(from: 0.0);
   }
 
   @override
@@ -97,51 +142,39 @@ class _ProgressSliderState extends State<ProgressSlider> {
   }
 
   Widget _buildSlider() {
-    return SliderTheme(
-      data: SliderThemeData(
-        // 已播放进度颜色
-        activeTrackColor: _progress,
-        // 未播放进度颜色（背景）
-        inactiveTrackColor: _background,
-        // 缓冲进度颜色
-        secondaryActiveTrackColor: _buffer,
-        // 拖动手柄颜色
-        thumbColor: _progress,
-        // 按下时的阴影颜色
-        overlayColor: _progress.withValues(alpha: 0.2),
-        // 轨道高度
-        trackHeight: 4,
-        // 手柄形状和大小
-        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-        // 轨道形状
-        trackShape: const RoundedRectSliderTrackShape(),
-        // 不显示刻度
-        showValueIndicator: ShowValueIndicator.never,
-        // 叠加轨道（已播放和缓冲在同一轨道）
-        overlappingShapeStrokeColor: Colors.transparent,
-      ),
-      child: Slider(
-        value: _isDragging ? _sliderValue : widget.value.clamp(0.0, 1.0),
-        secondaryTrackValue: widget.bufferValue.clamp(0.0, 1.0),
-        max: 1.0,
-        // 拖动开始
-        onChangeStart: (_) {
-          setState(() => _isDragging = true);
-        },
-        // 拖动中：只更新本地状态
-        onChanged: (value) {
-          setState(() => _sliderValue = value);
-        },
-        // 拖动结束：执行 seek
-        onChangeEnd: (value) {
-          setState(() {
-            _sliderValue = value;
-            _isDragging = false; // 立即结束拖动状态
-            _dragEndFrame = 2; // 设置2帧冷却期，防止旧值覆盖
-          });
-          widget.onSeek(value);
-        },
-      ),
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        final displayValue =
+            _isDragging ? _sliderValue : _animation.value.clamp(0.0, 1.0);
+
+        return SliderTheme(
+          data: _sliderTheme,
+          child: Slider(
+            value: displayValue,
+            secondaryTrackValue: widget.bufferValue.clamp(0.0, 1.0),
+            max: 1.0,
+            onChangeStart: (_) {
+              _animController.stop();
+              _sliderValue = _animation.value.clamp(0.0, 1.0);
+              _isDragging = true;
+            },
+            onChanged: (value) {
+              _sliderValue = value;
+            },
+            onChangeEnd: (value) {
+              _sliderValue = value;
+              _animController.stop();
+              _animController.value = 0.0;
+              _animation = AlwaysStoppedAnimation(value);
+              setState(() {
+                _isDragging = false;
+              });
+              widget.onSeek(value);
+            },
+          ),
+        );
+      },
     );
   }
 }
