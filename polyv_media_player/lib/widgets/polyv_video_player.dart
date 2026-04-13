@@ -214,6 +214,12 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
   /// 视频切换中的黑色遮罩
   bool _isSwitchingVideo = false;
 
+  /// 全屏进度条拖动状态
+  bool _isFsDragging = false;
+  double _fsDragValue = 0.0;
+  /// 全屏拖动结束后等待 seek 完成的覆盖值
+  double? _fsSeekOverride;
+
   /// 自动管理的视频视图 key seed（vid 变化时自动更新）
   Object _internalKeySeed = Object();
 
@@ -961,15 +967,20 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         children: [
           _buildPlayPauseButton(),
           const SizedBox(width: 8),
-          ListenableBuilder(
-            listenable: _controller,
-            builder: (context, _) {
-              return Text(
-                '${_formatTime(_controller.state.position)} / ${_formatTime(_controller.state.duration)}',
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-              );
-            },
-          ),
+          _isFsDragging
+              ? Text(
+                  '${_formatTime((_fsDragValue * _controller.state.duration).toInt())} / ${_formatTime(_controller.state.duration)}',
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                )
+              : ListenableBuilder(
+                  listenable: _controller,
+                  builder: (context, _) {
+                    return Text(
+                      '${_formatTime(_controller.state.position)} / ${_formatTime(_controller.state.duration)}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    );
+                  },
+                ),
           const SizedBox(width: 16),
           Expanded(child: _buildFullscreenProgressBar()),
           const SizedBox(width: 16),
@@ -985,7 +996,103 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
 
   /// 全屏进度条
   Widget _buildFullscreenProgressBar() {
-    return _SmoothProgressBar(controller: _controller);
+    return ListenableBuilder(
+      listenable: _controller,
+      builder: (context, _) {
+        final state = _controller.state;
+        final actualProgress = state.progress.clamp(0.0, 1.0);
+
+        // 拖动结束后保留覆盖值，直到原生 progress 追上来
+        if (_fsSeekOverride != null &&
+            (actualProgress - _fsSeekOverride!).abs() < 0.005) {
+          _fsSeekOverride = null;
+        }
+
+        final displayValue = _isFsDragging
+            ? _fsDragValue
+            : (_fsSeekOverride ?? actualProgress);
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final sliderWidth = constraints.maxWidth;
+            return Stack(
+              clipBehavior: Clip.none,
+              children: [
+                SliderTheme(
+                  data: SliderThemeData(
+                    activeTrackColor: const Color(0xFFE8704D),
+                    inactiveTrackColor: const Color(0xFF2D3548),
+                    secondaryActiveTrackColor: const Color(0xFF3D4560),
+                    thumbColor: const Color(0xFFE8704D),
+                    overlayColor: const Color(0x33E8704D),
+                    trackHeight: 2,
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    trackShape: const RectangularSliderTrackShape(),
+                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                    showValueIndicator: ShowValueIndicator.never,
+                  ),
+                  child: Slider(
+                    value: displayValue,
+                    secondaryTrackValue: state.bufferProgress.clamp(0.0, 1.0),
+                    max: 1.0,
+                    onChangeStart: (_) {
+                      _controlBarStateMachine.cancelTimer();
+                      setState(() {
+                        _isFsDragging = true;
+                        _fsDragValue = state.progress.clamp(0.0, 1.0);
+                      });
+                    },
+                    onChanged: (value) {
+                      // 拖动中只更新视觉位置，不 seek（避免卡顿）
+                      setState(() => _fsDragValue = value);
+                    },
+                    onChangeEnd: (value) {
+                      // 松手时 seek，保留覆盖值直到原生 progress 追上
+                      final position = (value * _controller.state.duration).toInt();
+                      setState(() {
+                        _isFsDragging = false;
+                        _fsSeekOverride = value;
+                      });
+                      _controller.seekTo(position);
+                      _controlBarStateMachine.enterActive();
+                    },
+                  ),
+                ),
+
+                // 拖动时在滑块上方显示时间气泡
+                if (_isFsDragging)
+                  Positioned(
+                    left: (_fsDragValue * sliderWidth).clamp(25.0, sliderWidth - 25.0),
+                    bottom: 20,
+                    child: FractionalTranslation(
+                      translation: const Offset(-0.5, 0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xDD000000),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          _formatTime((_fsDragValue * state.duration).toInt()),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   /// 退出全屏按钮
@@ -1362,10 +1469,15 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
   }
 }
 
-/// 流畅的进度条组件
+/// 流畅的进度条组件（竖屏专用）
 ///
 /// 使用 GestureDetector + CustomPaint 替代 Flutter Slider，
 /// 与手势 seek 一样通过 setState 驱动连续更新，确保拖动流畅。
+///
+/// 注意：此组件仅用于竖屏模式的进度条。全屏模式使用 Slider，
+/// 因为 GestureDetector 的 HorizontalDragGestureRecognizer 会与外层
+/// PlayerGestureDetector 的 PanGestureRecognizer 在手势竞技场中竞争，
+/// 导致全屏时 onTap 无法胜出，控制条无法显示。
 class _SmoothProgressBar extends StatefulWidget {
   final PlayerController controller;
 
@@ -1378,6 +1490,8 @@ class _SmoothProgressBar extends StatefulWidget {
 class _SmoothProgressBarState extends State<_SmoothProgressBar> {
   bool _isDragging = false;
   double _dragProgress = 0.0;
+  /// 拖动结束后等待 seek 完成的覆盖值
+  double? _seekOverride;
 
   void _seekToProgress(double progress) {
     final state = widget.controller.state;
@@ -1421,7 +1535,10 @@ class _SmoothProgressBarState extends State<_SmoothProgressBar> {
               },
               onHorizontalDragEnd: (_) {
                 _seekToProgress(_dragProgress);
-                setState(() => _isDragging = false);
+                setState(() {
+                  _isDragging = false;
+                  _seekOverride = _dragProgress;
+                });
               },
               onHorizontalDragCancel: () {
                 setState(() => _isDragging = false);
@@ -1430,9 +1547,17 @@ class _SmoothProgressBarState extends State<_SmoothProgressBar> {
                 listenable: widget.controller,
                 builder: (context, _) {
                   final state = widget.controller.state;
+                  final actualProgress = state.progress.clamp(0.0, 1.0);
+
+                  // 拖动结束后保留覆盖值，直到原生 progress 追上来
+                  if (_seekOverride != null &&
+                      (actualProgress - _seekOverride!).abs() < 0.005) {
+                    _seekOverride = null;
+                  }
+
                   final progress = _isDragging
                       ? _dragProgress
-                      : state.progress.clamp(0.0, 1.0);
+                      : (_seekOverride ?? actualProgress);
 
                   return CustomPaint(
                     painter: _ProgressBarPainter(
@@ -1579,5 +1704,92 @@ class _ProgressBarPainter extends CustomPainter {
   @override
   bool shouldRepaint(_ProgressBarPainter old) {
     return old.progress != progress || old.bufferProgress != bufferProgress;
+  }
+}
+
+/// 全屏进度条的时间预览气泡
+///
+/// 自定义 Slider 的 valueIndicator，将 0-1 的进度值转换为时间文字显示。
+class _TimeIndicatorShape extends SliderComponentShape {
+  final int duration;
+  final String Function(int) formatTime;
+
+  const _TimeIndicatorShape({
+    required this.duration,
+    required this.formatTime,
+  });
+
+  @override
+  Size getPreferredSize(bool isEnabled, bool isDiscrete) {
+    return const Size(50, 28);
+  }
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset center, {
+    required Animation<double> activationAnimation,
+    required Animation<double> enableAnimation,
+    required bool isDiscrete,
+    required TextPainter labelPainter,
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required TextDirection textDirection,
+    required double value,
+    required double textScaleFactor,
+    required Size sizeWithOverflow,
+  }) {
+    final positionMs = (value * duration).toInt();
+    final timeText = formatTime(positionMs);
+
+    final painter = TextPainter(
+      text: TextSpan(
+        text: timeText,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+          fontFeatures: [FontFeature.tabularFigures()],
+        ),
+      ),
+      textDirection: textDirection,
+    )..layout();
+
+    // 气泡背景
+    const bubbleWidth = 50.0;
+    const bubbleHeight = 24.0;
+    const bubbleRadius = 4.0;
+    const bubbleYOffset = 16.0;
+
+    final bubbleRect = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+        center: Offset(center.dx, center.dy - bubbleYOffset - bubbleHeight / 2),
+        width: bubbleWidth,
+        height: bubbleHeight,
+      ),
+      const Radius.circular(bubbleRadius),
+    );
+
+    context.canvas.drawRRect(
+      bubbleRect,
+      Paint()..color = const Color(0xDD000000),
+    );
+
+    // 绘制小三角
+    final trianglePath = Path()
+      ..moveTo(center.dx - 4, bubbleRect.bottom)
+      ..lineTo(center.dx + 4, bubbleRect.bottom)
+      ..lineTo(center.dx, bubbleRect.bottom + 4)
+      ..close();
+    context.canvas.drawPath(trianglePath, Paint()..color = const Color(0xDD000000));
+
+    // 绘制时间文字
+    painter.paint(
+      context.canvas,
+      Offset(
+        center.dx - painter.width / 2,
+        bubbleRect.top + (bubbleHeight - painter.height) / 2,
+      ),
+    );
   }
 }
