@@ -68,6 +68,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 @property (nonatomic, copy) NSString *secretKey;
 @property (nonatomic, copy) NSString *env;          // 环境标识（预留）
 @property (nonatomic, copy) NSString *businessLine; // 业务线标识（预留）
+@property (nonatomic, strong) NSMutableSet<NSString *> *pendingFallbackVids; // 正在进行回退验证的 vid 集合（去重）
 
 - (void)sendQualityDataForVideo:(PLVVodMediaVideo *)video;
 - (void)sendQualityDataForVideo:(PLVVodMediaVideo *)video updateCurrentIndex:(NSInteger)updateIndex;
@@ -856,6 +857,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 /// Story 9.7: 恢复下载任务
 ///
 /// 调用 PLVDownloadMediaManager 的 startDownloadTask:highPriority: 方法
+/// 添加延迟验证：若 SDK 未实际恢复下载，自动回退为重新创建下载任务
 - (void)handleResumeDownload:(NSDictionary *)args result:(FlutterResult)result {
     NSLog(@"[PolyvPlugin] ========== handleResumeDownload called ==========");
     NSString *vid = args[@"vid"];
@@ -883,6 +885,10 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     @try {
         [[PLVDownloadMediaManager sharedManager] startDownloadTask:downloadInfo highPriority:NO];
         NSLog(@"[PolyvPlugin] Download resumed for vid: %@", vid);
+
+        // 延迟验证下载是否真正恢复
+        [self verifyDownloadRunningWithFallback:vid];
+
         result(nil);
     } @catch (NSException *exception) {
         NSLog(@"[PolyvPlugin] ERROR: Failed to resume download - %@", exception.reason);
@@ -895,6 +901,7 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 /// Story 9.4/9.7: 重试失败的下载任务
 ///
 /// 调用 PLVDownloadMediaManager 的 startDownloadTask:highPriority: 方法
+/// 添加延迟验证：若 SDK 未实际恢复下载，自动回退为重新创建下载任务
 - (void)handleRetryDownload:(NSDictionary *)args result:(FlutterResult)result {
     NSLog(@"[PolyvPlugin] ========== handleRetryDownload called ==========");
     NSString *vid = args[@"vid"];
@@ -922,6 +929,10 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
     @try {
         [[PLVDownloadMediaManager sharedManager] startDownloadTask:downloadInfo highPriority:NO];
         NSLog(@"[PolyvPlugin] Download retry started for vid: %@", vid);
+
+        // 延迟验证下载是否真正恢复
+        [self verifyDownloadRunningWithFallback:vid];
+
         result(nil);
     } @catch (NSException *exception) {
         NSLog(@"[PolyvPlugin] ERROR: Failed to retry download - %@", exception.reason);
@@ -1096,6 +1107,116 @@ static PolyvMediaPlayerPlugin *_sharedInstance = nil;
 }
 
 #pragma mark - Helper Methods
+
+/// 验证下载是否真正恢复，若未恢复则回退为重新创建下载任务
+///
+/// 延迟 1.5 秒后检查下载状态，如果 SDK 未能恢复下载（App 被杀死后 PLVDownloadInfo 可能缺少有效凭证），
+/// 则删除旧任务并通过 requestVideoPriorityCacheWithVid: 重新创建下载。
+/// 使用 pendingFallbackVids 集合防止同一 vid 的多次并发回退。
+- (void)verifyDownloadRunningWithFallback:(NSString *)vid {
+    NSString *vidCopy = [vid copy];
+
+    // 去重：如果已有该 vid 的回退在等待中，跳过
+    if (!self.pendingFallbackVids) {
+        self.pendingFallbackVids = [NSMutableSet set];
+    }
+    if ([self.pendingFallbackVids containsObject:vidCopy]) {
+        NSLog(@"[PolyvPlugin] Fallback already pending for vid: %@, skipping", vidCopy);
+        return;
+    }
+    [self.pendingFallbackVids addObject:vidCopy];
+
+    __weak typeof(self) weakSelf = self;
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self) return;
+
+        // 清除去重标记
+        [self.pendingFallbackVids removeObject:vidCopy];
+
+        PLVDownloadInfo *currentInfo = [[PLVDownloadMediaManager sharedManager] getDownloadInfo:vidCopy fileType:PLVDownloadFileTypeVideo];
+
+        // 检查下载是否已处于活跃状态（Running / Preparing / Ready 均表示已启动）
+        if (currentInfo &&
+            (currentInfo.state == PLVVodDownloadStateRunning ||
+             currentInfo.state == PLVVodDownloadStatePreparing ||
+             currentInfo.state == PLVVodDownloadStatePreparingTask ||
+             currentInfo.state == PLVVodDownloadStateReady)) {
+            NSLog(@"[PolyvPlugin] Download verified as running for vid: %@", vidCopy);
+            return;
+        }
+
+        // 如果下载已完成（小文件可能在 1.5s 内完成），不需要回退
+        if (currentInfo && currentInfo.state == PLVVodDownloadStateSuccess) {
+            NSLog(@"[PolyvPlugin] Download already completed for vid: %@, skipping fallback", vidCopy);
+            return;
+        }
+
+        // 如果任务不存在（可能被用户删除），不需要回退
+        if (!currentInfo) {
+            NSLog(@"[PolyvPlugin] Download task no longer exists for vid: %@, skipping fallback", vidCopy);
+            return;
+        }
+
+        NSLog(@"[PolyvPlugin] WARNING: Download did not start after 1.5s for vid: %@, state: %ld. Falling back to recreate.",
+              vidCopy, (long)currentInfo.state);
+
+        // 删除旧任务并通知 Dart 层
+        NSError *deleteError = nil;
+        [[PLVDownloadMediaManager sharedManager] removeDownloadTask:currentInfo error:&deleteError];
+        if (deleteError) {
+            NSLog(@"[PolyvPlugin] ERROR: Fallback - failed to delete stale task: %@", deleteError.localizedDescription);
+            return;
+        }
+        NSLog(@"[PolyvPlugin] Fallback: deleted stale download for vid: %@", vidCopy);
+
+        // 发送 taskRemoved 事件通知 Dart 层旧任务已删除
+        [self.eventEmitter sendDownloadEvent:@{
+            @"type": @"taskRemoved",
+            @"data": @{
+                @"id": vidCopy
+            }
+        }];
+
+        // 确保账号已配置
+        if (self.userId && self.userId.length > 0) {
+            [[PLVDownloadMediaManager sharedManager] setAccountID:self.userId];
+        }
+
+        // 重新请求视频信息并创建下载
+        [PLVVodMediaVideo requestVideoPriorityCacheWithVid:vidCopy completion:^(PLVVodMediaVideo *video, NSError *error) {
+            if (error || !video) {
+                NSLog(@"[PolyvPlugin] ERROR: Fallback - failed to request video for vid %@: %@",
+                      vidCopy, error.localizedDescription ?: @"video is nil");
+                return;
+            }
+
+            // 防止在请求期间用户已创建了同 vid 的任务
+            PLVDownloadInfo *existingInfo = [[PLVDownloadMediaManager sharedManager] getDownloadInfo:vidCopy fileType:PLVDownloadFileTypeVideo];
+            if (existingInfo) {
+                NSLog(@"[PolyvPlugin] Fallback: task already exists for vid: %@, skipping recreate", vidCopy);
+                return;
+            }
+
+            @try {
+                PLVDownloadInfo *newInfo = [[PLVDownloadMediaManager sharedManager] addVideoTask:video quality:PLVVodMediaQualityHigh];
+                if (!newInfo) {
+                    NSLog(@"[PolyvPlugin] ERROR: Fallback - failed to create download task for vid: %@", vidCopy);
+                    return;
+                }
+
+                if (![PLVDownloadMediaManager sharedManager].autoStart) {
+                    [[PLVDownloadMediaManager sharedManager] startDownload];
+                }
+
+                NSLog(@"[PolyvPlugin] Fallback: recreated download for vid: %@", vidCopy);
+            } @catch (NSException *exception) {
+                NSLog(@"[PolyvPlugin] ERROR: Fallback exception for vid %@: %@", vidCopy, exception.reason);
+            }
+        }];
+    });
+}
 
 - (void)clearPlayer {
     // 重置清晰度切换标志

@@ -213,20 +213,14 @@
     NSString *vid = info.vid ?: @"";
     if (vid.length == 0) return;
 
-    long long downloadedBytes = (long long)(info.progress * info.filesize);
-
     [self.eventEmitter sendDownloadEvent:@{
-        @"type": @"taskProgress",
+        @"type": @"taskResumed",
         @"data": @{
-            @"id": vid,
-            @"downloadedBytes": @(downloadedBytes),
-            @"totalBytes": @(info.filesize),
-            @"bytesPerSecond": @(0),
-            @"status": @"downloading"
+            @"id": vid
         }
     }];
 
-    NSLog(@"[PolyvPlugin] Send resumed event for vid=%@ with downloadedBytes=%lld", vid, downloadedBytes);
+    NSLog(@"[PolyvPlugin] Send resumed event for vid=%@", vid);
 }
 
 - (NSDictionary *)convertDownloadInfoToDict:(PLVDownloadInfo *)info {
