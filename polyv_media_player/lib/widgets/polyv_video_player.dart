@@ -299,6 +299,13 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
           secretKey: config.secretKey,
         );
       }
+    // 服务初始化完成后，如果弹幕尚未加载（快速路径的竞态），补充加载
+    if (mounted && widget.enableDanmaku && _danmakus.isEmpty) {
+      final service = widget.danmakuService ?? _ownedDanmakuService;
+      if (service != null) {
+        _loadDanmakus(service);
+      }
+    }
     } catch (e) {
       debugPrint(
         'PolyvVideoPlayer: Failed to auto-initialize danmaku services: $e',
