@@ -1010,8 +1010,10 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         final actualProgress = state.progress.clamp(0.0, 1.0);
 
         // 拖动结束后保留覆盖值，直到原生 progress 追上来
+        // 播放完成时也清除覆盖值，避免重播后进度条卡在终点
         if (_fsSeekOverride != null &&
-            (actualProgress - _fsSeekOverride!).abs() < 0.005) {
+            ((actualProgress - _fsSeekOverride!).abs() < 0.005 ||
+             state.loadingState == PlayerLoadingState.completed)) {
           _fsSeekOverride = null;
         }
 
@@ -1264,7 +1266,10 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
         child: Center(
           child: GestureDetector(
             onTap: () {
-              setState(() => _isEnded = false);
+              setState(() {
+                _isEnded = false;
+                _fsSeekOverride = null;
+              });
               _controller.replay();
               _controlBarStateMachine.enterPassive();
             },
@@ -1408,7 +1413,7 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
 
   /// 构建进度条（与原版 long_video_page 样式一致）
   Widget _buildProgressBar() {
-    return _SmoothProgressBar(controller: _controller);
+    return _SmoothProgressBar(controller: _controller, isEnded: _isEnded);
   }
 
   /// 构建全屏按钮
@@ -1487,8 +1492,9 @@ class _PolyvVideoPlayerState extends State<PolyvVideoPlayer> {
 /// 导致全屏时 onTap 无法胜出，控制条无法显示。
 class _SmoothProgressBar extends StatefulWidget {
   final PlayerController controller;
+  final bool isEnded;
 
-  const _SmoothProgressBar({required this.controller});
+  const _SmoothProgressBar({required this.controller, required this.isEnded});
 
   @override
   State<_SmoothProgressBar> createState() => _SmoothProgressBarState();
@@ -1499,6 +1505,15 @@ class _SmoothProgressBarState extends State<_SmoothProgressBar> {
   double _dragProgress = 0.0;
   /// 拖动结束后等待 seek 完成的覆盖值
   double? _seekOverride;
+
+  @override
+  void didUpdateWidget(_SmoothProgressBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 从结束状态恢复（点击重播）时清除覆盖值
+    if (oldWidget.isEnded && !widget.isEnded) {
+      _seekOverride = null;
+    }
+  }
 
   void _seekToProgress(double progress) {
     final state = widget.controller.state;
@@ -1557,8 +1572,10 @@ class _SmoothProgressBarState extends State<_SmoothProgressBar> {
                   final actualProgress = state.progress.clamp(0.0, 1.0);
 
                   // 拖动结束后保留覆盖值，直到原生 progress 追上来
+                  // 播放完成时也清除覆盖值，避免重播后进度条卡在终点
                   if (_seekOverride != null &&
-                      (actualProgress - _seekOverride!).abs() < 0.005) {
+                      ((actualProgress - _seekOverride!).abs() < 0.005 ||
+                       state.loadingState == PlayerLoadingState.completed)) {
                     _seekOverride = null;
                   }
 
