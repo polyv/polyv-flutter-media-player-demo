@@ -37,9 +37,6 @@
 # Claude AI
 # .claude/
 
-# Windsurf CI
-# .windsurf/
-
 # Temporary files
 *.log
 *.tmp
