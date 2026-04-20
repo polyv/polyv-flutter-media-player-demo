@@ -35,7 +35,9 @@
 # docs/implementation-artifacts/
 
 # Claude AI
-# .claude/
+.claude/
+_bmad
+docs
 
 # Temporary files
 *.log
